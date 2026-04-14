@@ -1,0 +1,34 @@
+# Environment
+.env
+*.env
+
+# GEE service account key — NEVER commit this
+# The secrets/ directory holds the GEE service account JSON key file
+secrets/
+# Explicitly block common credential file names at root level
+gee-key.json
+service-account*.json
+credentials*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Data files — shapefiles can be large
+data/full/
+*.shp
+*.dbf
+*.shx
+*.prj
+
+# macOS
+.DS_Store
