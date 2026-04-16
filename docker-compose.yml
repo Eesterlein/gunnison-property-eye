@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -30,7 +30,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-changeme}
       ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./backend/src:/app/src
       - ./backend/scripts:/app/scripts
@@ -40,6 +40,23 @@ services:
       db:
         condition: service_healthy
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+
+  tipg:
+    image: ghcr.io/developmentseed/tipg:latest
+    container_name: property_eye_tipg
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASS: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DBNAME: ${POSTGRES_DB:-property_eye}
+      TIPG_DB_SCHEMAS: '["public"]'
+      TIPG_ROOT_PATH: "/api"
+    ports:
+      - "8002:80"
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pgdata:

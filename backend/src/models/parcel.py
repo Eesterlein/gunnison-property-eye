@@ -14,7 +14,7 @@ class Parcel(Base):
     jurisdiction = Column(String(100))  # Gunnison County, City of Gunnison, etc.
     acres = Column(Float)
     land_use_code = Column(String(50))
-    geometry = Column(Geometry("MULTIPOLYGON", srid=4326), nullable=False)
+    geometry = Column(Geometry(srid=4326), nullable=False)
     last_scan_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -93,6 +93,7 @@ def main():
     db = SessionLocal()
     inserted = 0
     skipped = 0
+    seen_apns = set()  # track duplicates within this run (e.g. condo units sharing an APN)
 
     try:
         for _, row in gdf.iterrows():
@@ -100,6 +101,11 @@ def main():
             if not apn:
                 skipped += 1
                 continue
+
+            if apn in seen_apns:
+                skipped += 1
+                continue
+            seen_apns.add(apn)
 
             existing = db.query(Parcel).filter(Parcel.apn == apn).first()
             if existing:
@@ -111,10 +117,8 @@ def main():
                 skipped += 1
                 continue
 
-            # Convert to MULTIPOLYGON if needed
-            if geom.geom_type == "Polygon":
-                from shapely.geometry import MultiPolygon
-                geom = MultiPolygon([geom])
+            # Store WKT directly — model accepts any geometry type
+            geom_wkt = geom.wkt
 
             situs = str(row.get("situs_address", "") or "").strip() or None
             parcel = Parcel(
@@ -124,7 +128,7 @@ def main():
                 jurisdiction=derive_jurisdiction(situs),
                 acres=float(row["acres"]) if row.get("acres") else None,
                 land_use_code=str(row.get("land_use_code", "") or "").strip() or None,
-                geometry=f"SRID=4326;{geom.wkt}",
+                geometry=f"SRID=4326;{geom_wkt}",
             )
             db.add(parcel)
             inserted += 1
