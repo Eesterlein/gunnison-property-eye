@@ -23,12 +23,10 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: property_eye_backend
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-property_eye}
-      GEE_SERVICE_ACCOUNT: ${GEE_SERVICE_ACCOUNT:-}
-      GEE_KEY_FILE: ${GEE_KEY_FILE:-/app/secrets/gee-key.json}
-      JWT_SECRET: ${JWT_SECRET:-changeme}
-      ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
       - "8001:8000"
     volumes:
