@@ -16,6 +16,21 @@ class FlagUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+@router.get("/flagged-parcel-ids")
+def get_flagged_parcel_ids(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return the set of parcel IDs that have at least one pending flag."""
+    rows = (
+        db.query(Flag.parcel_id)
+        .filter(Flag.status == FlagStatus.pending)
+        .distinct()
+        .all()
+    )
+    return {"parcel_ids": [r[0] for r in rows]}
+
+
 @router.get("/")
 def list_flags(
     status: Optional[FlagStatus] = None,

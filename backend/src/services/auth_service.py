@@ -1,6 +1,6 @@
 import os
+import bcrypt
 from datetime import datetime, timedelta
-from passlib.context import CryptContext
 from jose import jwt
 
 SECRET_KEY = os.getenv("JWT_SECRET", "changeme")
@@ -9,18 +9,18 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8 hours
 
 # Refuse to start in production with the default insecure secret
 if os.getenv("ENVIRONMENT", "development") == "production" and SECRET_KEY == "changeme":
-    raise RuntimeError("JWT_SECRET must be set to a strong random value in production. "
-                       "Generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\"")
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    raise RuntimeError(
+        "JWT_SECRET must be set to a strong random value in production. "
+        "Generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def create_access_token(data: dict) -> str:
