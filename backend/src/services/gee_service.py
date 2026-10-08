@@ -211,3 +211,69 @@ def get_thumbnail_url(
     # display stretch for well-exposed true-color scenes.
     vis = composite.visualize(bands=["B4", "B3", "B2"], min=0, max=3000, gamma=1.4)
     return vis.getThumbURL({"region": region, "dimensions": dimensions, "format": "png"})
+
+
+# USDA NAIP aerial photography — flown every ~2 years over Colorado in
+# summer/fall, 0.3–1m per pixel (newer flights are sharper). Far more detail
+# than Sentinel-2's 10m, and each flight is dated, so it supports a real
+# visual before/after. Not used for flagging (no SWIR band for NDBI).
+NAIP_COLLECTION = "USDA/NAIP/DOQQ"
+
+
+def get_naip_history(
+    geometry_wkt: str,
+    buffer_m: int = 40,
+    dimensions: int = 768,
+) -> list[dict]:
+    """
+    Every NAIP flight year covering the parcel, oldest first, each with a
+    true-color thumbnail URL (parcel outline drawn in yellow) and the
+    acquisition date range of the tiles that make up that year's mosaic.
+
+    All years share the same region and dimensions, so the images line up
+    pixel-for-pixel and can be overlaid in a swipe comparison.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    initialize()
+
+    geom = _wkt_to_ee_geometry(geometry_wkt)
+    region = geom.buffer(buffer_m).bounds()
+    collection = ee.ImageCollection(NAIP_COLLECTION).filterBounds(region)
+
+    timestamps = collection.aggregate_array("system:time_start").getInfo()
+    if not timestamps:
+        return []
+
+    dates_by_year: dict[int, list[str]] = {}
+    for ts in timestamps:
+        d = datetime.utcfromtimestamp(ts / 1000).date()
+        dates_by_year.setdefault(d.year, []).append(d.isoformat())
+
+    outline = (
+        ee.Image()
+        .byte()
+        .paint(ee.FeatureCollection([ee.Feature(geom)]), 1, 2)
+        .visualize(palette=["facc15"])
+    )
+
+    def _year_entry(year: int) -> dict:
+        mosaic = collection.filter(ee.Filter.calendarRange(year, year, "year")).mosaic()
+        vis = mosaic.visualize(bands=["R", "G", "B"], min=0, max=255)
+        # Unbounded background so every year renders the full region — a
+        # thumbnail is otherwise cropped to the flight's tile footprint and
+        # years wouldn't line up when a parcel sits near a tile edge.
+        background = (
+            ee.Image.constant([241, 245, 249])
+            .rename(["vis-red", "vis-green", "vis-blue"])
+            .uint8()
+        )
+        url = ee.ImageCollection([background, vis, outline]).mosaic().getThumbURL(
+            {"region": region, "dimensions": dimensions, "format": "png"}
+        )
+        dates = sorted(dates_by_year[year])
+        return {"year": year, "date_start": dates[0], "date_end": dates[-1], "url": url}
+
+    # getThumbURL is one round trip per year — run them concurrently.
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        return list(pool.map(_year_entry, sorted(dates_by_year)))

@@ -26,6 +26,124 @@ function InfoLabel({ children, term }) {
   );
 }
 
+// Dated high-resolution NAIP aerial photos for every flight year, with a
+// swipe comparison between two chosen years. All years are rendered over the
+// same extent, so the two images line up exactly when overlaid.
+function AerialHistory({ parcelId }) {
+  const [years, setYears] = useState(null); // null = loading
+  const [error, setError] = useState("");
+  const [beforeYear, setBeforeYear] = useState(null);
+  const [afterYear, setAfterYear] = useState(null);
+  const [split, setSplit] = useState(50);
+
+  useEffect(() => {
+    setYears(null);
+    setError("");
+    api
+      .get(`/api/parcels/${parcelId}/aerial-history`)
+      .then((res) => {
+        const ys = res.data.years || [];
+        setYears(ys);
+        if (ys.length >= 2) {
+          setBeforeYear(ys[ys.length - 2].year);
+          setAfterYear(ys[ys.length - 1].year);
+        }
+      })
+      .catch(() => setError("Failed to load aerial photos."));
+  }, [parcelId]);
+
+  if (error) return <p className="text-xs text-red-600">{error}</p>;
+  if (years === null) return <p className="text-xs text-slate-400">Loading aerial photos…</p>;
+  if (years.length < 2) {
+    return <p className="text-xs text-slate-400 italic">Not enough aerial photo years cover this parcel.</p>;
+  }
+
+  const before = years.find((y) => y.year === beforeYear);
+  const after = years.find((y) => y.year === afterYear);
+  const flightLabel = (y) =>
+    y.date_start === y.date_end ? `flown ${y.date_start}` : `flown ${y.date_start} – ${y.date_end}`;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+        <label className="flex items-center gap-1.5">
+          Left
+          <select
+            value={beforeYear}
+            onChange={(e) => setBeforeYear(Number(e.target.value))}
+            className="border border-slate-300 rounded px-1.5 py-1"
+          >
+            {years.map((y) => (
+              <option key={y.year} value={y.year}>{y.year}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5">
+          Right
+          <select
+            value={afterYear}
+            onChange={(e) => setAfterYear(Number(e.target.value))}
+            className="border border-slate-300 rounded px-1.5 py-1"
+          >
+            {years.map((y) => (
+              <option key={y.year} value={y.year}>{y.year}</option>
+            ))}
+          </select>
+        </label>
+        <span className="text-slate-400">Drag the slider to swipe between years.</span>
+      </div>
+
+      {/* Swipe comparison: left year underneath, right year clipped on top */}
+      <div className="relative select-none rounded border border-slate-200 overflow-hidden bg-slate-100">
+        <img src={before.url} alt={`Aerial photo ${before.year}`} className="w-full block" draggable={false} />
+        <img
+          src={after.url}
+          alt={`Aerial photo ${after.year}`}
+          className="absolute inset-0 w-full h-full"
+          style={{ clipPath: `inset(0 0 0 ${split}%)` }}
+          draggable={false}
+        />
+        <div className="absolute top-0 bottom-0 w-0.5 bg-white shadow pointer-events-none" style={{ left: `${split}%` }} />
+        <span className="absolute top-2 left-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5">{before.year}</span>
+        <span className="absolute top-2 right-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5">{after.year}</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={split}
+          onChange={(e) => setSplit(Number(e.target.value))}
+          aria-label="Swipe between years"
+          className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize"
+        />
+      </div>
+      <p className="text-[11px] text-slate-400">
+        Left: {before.year} ({flightLabel(before)}). Right: {after.year} ({flightLabel(after)}).
+        USDA NAIP aerial photography, roughly 0.3–1m per pixel; parcel outline in yellow.
+        NAIP is flown about every two years, so very recent construction may not appear yet.
+      </p>
+
+      {/* Every year at a glance — click to put a year on the left */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {years.map((y) => (
+          <button
+            key={y.year}
+            onClick={() => setBeforeYear(y.year)}
+            className={`shrink-0 w-24 text-left rounded border p-0.5 ${
+              y.year === beforeYear || y.year === afterYear
+                ? "border-blue-500"
+                : "border-slate-200 hover:border-slate-400"
+            }`}
+          >
+            <img src={y.url} alt={`Aerial photo ${y.year}`} loading="lazy" className="w-full rounded-sm" />
+            <span className="block text-[11px] text-slate-600 px-0.5">{y.year}</span>
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-slate-400">Click a year above to compare it on the left.</p>
+    </div>
+  );
+}
+
 export default function ParcelDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -162,6 +280,12 @@ export default function ParcelDetail() {
             <p><span className="text-slate-400">Last scan:</span> {new Date(parcel.last_scan_date).toLocaleDateString()}</p>
           )}
         </div>
+      </div>
+
+      {/* Aerial photo history */}
+      <div className="bg-white border border-slate-200 rounded-lg p-5">
+        <h2 className="font-semibold text-slate-700 mb-3">Aerial Photo History</h2>
+        <AerialHistory parcelId={id} />
       </div>
 
       {/* Flags for review */}
@@ -390,9 +514,9 @@ export default function ParcelDetail() {
                         </div>
                       </div>
                       <p className="text-[11px] text-slate-400 mt-1.5">
-                        Sentinel-2 satellite imagery, ~10m per pixel — enough to sanity-check a
-                        large change, not fine detail like roofline or additions. Click an image
-                        to enlarge.
+                        Sentinel-2 satellite imagery, ~10m per pixel — the same seasons the
+                        scan compared, but too coarse for roofline or additions. Use Aerial
+                        Photo History above for detail. Click an image to enlarge.
                       </p>
                     </>
                   )}

@@ -119,6 +119,26 @@ def get_parcel_imagery(
     }
 
 
+@router.get("/{parcel_id}/aerial-history")
+def get_parcel_aerial_history(
+    parcel_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """
+    Dated high-resolution NAIP aerial photos of the parcel for every flight
+    year available (~every 2 years since 2005), for visual change review.
+    """
+    from geoalchemy2.shape import to_shape
+
+    parcel = db.query(Parcel).filter(Parcel.id == parcel_id).first()
+    if not parcel:
+        raise HTTPException(status_code=404, detail="Parcel not found")
+
+    wkt = to_shape(parcel.geometry).wkt
+    return {"years": gee_service.get_naip_history(wkt)}
+
+
 def _parcel_to_dict(p: Parcel) -> dict:
     return {
         "id": p.id,

@@ -178,6 +178,23 @@ detail would require a different, higher-resolution paid imagery source (e.g.
 Planet, Maxar/NearMap) — a separate integration, not a tweak to this endpoint.
 Decided 2026-09-08 to ship the Sentinel-2 version as-is rather than pursue that.
 
+### Aerial photo history (added 2026-10-07)
+Sentinel-2 thumbnails were too coarse to verify flags, and paid sub-foot
+imagery (EagleView, Nearmap) is out of scope. `ParcelDetail.jsx` now
+opens with an **Aerial Photo History** card backed by
+`GET /api/parcels/{id}/aerial-history` (`gee_service.get_naip_history`): USDA
+NAIP aerial photography (`USDA/NAIP/DOQQ`) from the same GEE account, free,
+dated, ~every 2 years since 2005 (2023 flight is 0.3m/pixel). One true-color
+thumbnail per flight year with the parcel outline in yellow, a two-year swipe
+comparison (defaults to the two latest years), and a filmstrip of all years.
+- Every year is rendered over the same region + dimensions and mosaicked onto a
+  constant background — without that, Earth Engine crops a thumbnail to the
+  flight tile's footprint and years misalign when a parcel sits near a tile edge.
+- NAIP is review-only, not used for flagging (no SWIR band for NDBI). Its
+  2-year cadence means construction from the latest season may not appear yet.
+- Possible next step: NAIP-based detection (NDVI loss + brightness gain at
+  sub-meter resolution) to catch small additions the 10m NDBI method misses.
+
 ## Important Notes
 - GEE authentication uses a service account JSON key — never commit to git
 - PostGIS is required (not plain Postgres) for geometry column support
