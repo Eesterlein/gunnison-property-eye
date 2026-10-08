@@ -1,15 +1,25 @@
 """
-Change detection service — Phase 2/3
+Change detection service — v2 (parcel-specific, building-aware)
 
-Compares NDBI values between two time periods per parcel and creates flags
-for parcels that exceed the change threshold.
+Compares two snow-free seasons (June–September) per parcel and flags parcels
+where something built-up appeared ON THE PARCEL, not just nearby.
 
-Detection logic:
-  1. For each parcel, pull NDBI for "before" period (prior year May–Oct)
-  2. Pull NDBI for "after" period (current year May–Oct)
-  3. Compute delta = ndbi_after - ndbi_before
-  4. If delta > NDBI_THRESHOLD and NDVI delta is NOT positive (not vegetation),
-     flag the parcel for human review
+Detection logic, per parcel:
+  1. Measure the parcel interior (boundary trimmed) and a ring of land around it,
+     for both seasons, in batched Earth Engine requests
+     (gee_service.get_parcel_change_batch):
+       - Dynamic World "built" probability — trained to tell buildings and
+         pavement apart from grass, shrub and bare ground
+       - NDBI and NDVI from the cloud-masked Sentinel-2 median composite
+  2. Local change = interior change − ring change, so neighborhood-wide change
+     (a new road, a whole subdivision going in) cancels out
+  3. Flag when BOTH the local built-probability change and the local NDBI change
+     exceed their thresholds, and vegetation didn't simply green up
+  4. High priority when the assessor carries the parcel as vacant
+     (improvements_value == 0) — the strongest lead for unreported construction
+
+v1 (single NDBI threshold on the raw parcel mean) flagged mostly dry-grass and
+neighbor/road changes; see CLAUDE.md for the calibration against NAIP photos.
 """
 import os
 from datetime import datetime, timezone
@@ -19,32 +29,50 @@ from geoalchemy2.shape import to_shape
 from src.models import Parcel, Scan, Detection, Flag, ScanStatus, FlagStatus
 from src.services import gee_service
 
-NDBI_THRESHOLD = float(os.getenv("NDBI_THRESHOLD", "0.15"))
+# Calibrated 2026-10-07 against 2021 vs 2023 NAIP aerial photos (random samples
+# of flagged parcels): local built change > 0.15 → 6 of 8 were real new
+# construction; 0.08–0.15 → 2 of 8; 0.05–0.08 → 1–2 of 8.
+BUILT_LOCAL_THRESHOLD = float(os.getenv("BUILT_LOCAL_THRESHOLD", "0.15"))
+NDBI_LOCAL_THRESHOLD = float(os.getenv("NDBI_LOCAL_THRESHOLD", "0.02"))
 NDVI_VETO_THRESHOLD = 0.10  # if NDVI increased by this much, likely vegetation not construction
 
+BATCH_SIZE = 1000
 
-def compute_delta(
-    ndbi_before: float,
-    ndbi_after: float,
-    ndvi_before: float | None,
-    ndvi_after: float | None,
-) -> dict:
+
+def compute_change(inner: dict, ring: dict) -> dict | None:
     """
-    Compute NDBI delta and determine if the change warrants a flag.
+    Parcel-specific change metrics and flag decision from the interior and ring
+    band means returned by get_parcel_change_batch. None if the parcel had no
+    usable (cloud-free) pixels in either season.
     """
-    ndbi_delta = ndbi_after - ndbi_before
+    needed = ("built_b", "built_a", "ndbi_b", "ndbi_a", "ndvi_b", "ndvi_a")
+    if any(inner.get(k) is None for k in needed):
+        return None
 
-    # Veto if vegetation increased significantly
-    ndvi_delta = (ndvi_after - ndvi_before) if (ndvi_before is not None and ndvi_after is not None) else 0
-    is_vegetation_change = ndvi_delta > NDVI_VETO_THRESHOLD
+    built_delta = inner["built_a"] - inner["built_b"]
+    ndbi_delta = inner["ndbi_a"] - inner["ndbi_b"]
+    ndvi_delta = inner["ndvi_a"] - inner["ndvi_b"]
 
-    flagged = ndbi_delta > NDBI_THRESHOLD and not is_vegetation_change
-    confidence = min(1.0, max(0.0, ndbi_delta / (NDBI_THRESHOLD * 3))) if flagged else 0.0
+    # Ring can be empty (e.g. parcel surrounded by water/no data) — then no correction
+    ring_ok = all(ring.get(k) is not None for k in ("built_b", "built_a", "ndbi_b", "ndbi_a"))
+    built_local = built_delta - ((ring["built_a"] - ring["built_b"]) if ring_ok else 0.0)
+    ndbi_local = ndbi_delta - ((ring["ndbi_a"] - ring["ndbi_b"]) if ring_ok else 0.0)
+
+    flagged = (
+        built_local > BUILT_LOCAL_THRESHOLD
+        and ndbi_local > NDBI_LOCAL_THRESHOLD
+        and ndvi_delta <= NDVI_VETO_THRESHOLD
+    )
+    # How far past the built threshold, scaled 0-1 (0.15 over threshold = 1.0)
+    confidence = min(1.0, (built_local - BUILT_LOCAL_THRESHOLD) / 0.15) if flagged else 0.0
 
     return {
-        "ndbi_delta": round(ndbi_delta, 4),
+        "built_delta": built_delta,
+        "built_local": built_local,
+        "ndbi_delta": ndbi_delta,
+        "ndbi_local": ndbi_local,
         "flagged": flagged,
-        "confidence_score": round(confidence, 3),
+        "confidence": round(max(0.0, confidence), 3),
     }
 
 
@@ -60,6 +88,10 @@ def get_scan_date_ranges(scan: Scan) -> tuple[str, str, str, str]:
     return before_start, before_end, after_start, after_end
 
 
+def _r(value: float | None, digits: int = 4) -> float | None:
+    return round(value, digits) if value is not None else None
+
+
 def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
     """
     Run change detection for a scan across all parcels.
@@ -70,107 +102,105 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
         limit:   Optional max parcels to process (useful for testing)
 
     Returns:
-        dict with parcels_scanned and parcels_flagged
+        dict with parcels_scanned, parcels_flagged and errors
     """
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not scan:
         raise ValueError(f"Scan {scan_id} not found")
 
-    # Update scan status
     scan.status = ScanStatus.running
     scan.started_at = datetime.now(timezone.utc)
     db.commit()
 
-    before_start, before_end, after_start, after_end = get_scan_date_ranges(scan)
+    before_year = scan.date_range_start.year
+    after_year = before_year + 1
 
-    parcels_query = db.query(Parcel)
+    parcels_query = db.query(Parcel.id, Parcel.geometry, Parcel.improvements_value).order_by(Parcel.id)
     if limit:
         parcels_query = parcels_query.limit(limit)
-    parcels = parcels_query.all()
+
+    # Sort into ~1km grid cells so each Earth Engine batch covers a compact area
+    parcels = []
+    for pid, geom, imps in parcels_query.all():
+        shape = to_shape(geom)
+        c = shape.centroid
+        parcels.append((round(c.y, 2), round(c.x, 2), pid, shape.wkt, imps))
+    parcels.sort()
 
     scan.total_parcels = len(parcels)
+    # Commit ends the read transaction — holding it open for the whole
+    # (long) Earth Engine run blocks schema changes and other writers.
     db.commit()
 
-    scanned = 0
-    flagged = 0
-    errors = 0
+    image_date_before = datetime(before_year, 9, 30)
+    image_date_after = datetime(after_year, 9, 30)
 
+    scanned = flagged = errors = 0
     try:
-        for parcel in parcels:
+        for i in range(0, len(parcels), BATCH_SIZE):
+            batch = parcels[i:i + BATCH_SIZE]
             try:
-                # Convert PostGIS geometry to WKT
-                shape = to_shape(parcel.geometry)
-                wkt = shape.wkt
-
-                # Pull NDBI for before and after periods
-                before = gee_service.get_ndbi_for_parcel(wkt, before_start, before_end)
-                after = gee_service.get_ndbi_for_parcel(wkt, after_start, after_end)
-
-                if not before["usable"] or not after["usable"]:
-                    scanned += 1
-                    continue
-
-                delta = compute_delta(
-                    before["ndbi_mean"],
-                    after["ndbi_mean"],
-                    before["ndvi_mean"],
-                    after["ndvi_mean"],
+                results = gee_service.get_parcel_change_batch(
+                    [(pid, wkt) for _, _, pid, wkt, _ in batch], before_year, after_year
                 )
+            except Exception as e:
+                errors += len(batch)
+                scanned += len(batch)
+                print(f"  Batch starting at {i} failed: {e}")
+                continue
+
+            for _, _, pid, _, imps in batch:
+                scanned += 1
+                r = results.get(pid)
+                change = compute_change(r["inner"], r.get("ring", {})) if r else None
+                if change is None:
+                    continue
+                inner = r["inner"]
 
                 detection = Detection(
-                    parcel_id=parcel.id,
+                    parcel_id=pid,
                     scan_id=scan_id,
-                    ndbi_before=before["ndbi_mean"],
-                    ndbi_after=after["ndbi_mean"],
-                    ndbi_delta=delta["ndbi_delta"],
-                    ndvi_before=before["ndvi_mean"],
-                    ndvi_after=after["ndvi_mean"],
-                    image_date_before=before["image_date"],
-                    image_date_after=after["image_date"],
-                    cloud_coverage_pct=after["cloud_coverage_pct"],
-                    pixel_count=after["pixel_count"],
-                    flagged=delta["flagged"],
-                    confidence_score=delta["confidence_score"],
+                    ndbi_before=_r(inner["ndbi_b"]),
+                    ndbi_after=_r(inner["ndbi_a"]),
+                    ndbi_delta=_r(change["ndbi_delta"]),
+                    ndvi_before=_r(inner["ndvi_b"]),
+                    ndvi_after=_r(inner["ndvi_a"]),
+                    built_before=_r(inner["built_b"]),
+                    built_after=_r(inner["built_a"]),
+                    built_local_delta=_r(change["built_local"]),
+                    ndbi_local_delta=_r(change["ndbi_local"]),
+                    image_date_before=image_date_before,
+                    image_date_after=image_date_after,
+                    pixel_count=int(inner.get("count") or 0),
+                    flagged=change["flagged"],
+                    confidence_score=change["confidence"],
                 )
                 db.add(detection)
 
-                if delta["flagged"]:
+                if change["flagged"]:
                     db.flush()  # get detection.id
-                    flag = Flag(
-                        parcel_id=parcel.id,
+                    db.add(Flag(
+                        parcel_id=pid,
                         detection_id=detection.id,
                         status=FlagStatus.pending,
-                        priority=1 if delta["confidence_score"] > 0.7 else 0,
-                    )
-                    db.add(flag)
+                        # Vacant on the books + new building = strongest lead
+                        priority=1 if imps == 0 else 0,
+                    ))
                     flagged += 1
 
-                scanned += 1
+            # Commit per batch, updating live progress for the UI
+            scan.parcels_scanned = scanned
+            scan.parcels_flagged = flagged
+            db.commit()
+            print(f"  Scanned {scanned}/{len(parcels)} parcels, {flagged} flagged so far...")
 
-                # Commit every 50 parcels, updating live progress so the UI can
-                # show real numbers instead of 0 until the whole scan finishes
-                if scanned % 50 == 0:
-                    scan.parcels_scanned = scanned
-                    scan.parcels_flagged = flagged
-                    db.commit()
-                    print(f"  Scanned {scanned}/{len(parcels)} parcels, {flagged} flagged so far...")
-
-            except Exception as e:
-                errors += 1
-                print(f"  Error on parcel {parcel.apn}: {e}")
-                continue
-
-        db.commit()
-
-        # Update parcel last_scan_date
-        for parcel in parcels:
-            parcel.last_scan_date = datetime.now(timezone.utc)
-        db.commit()
-
+        now = datetime.now(timezone.utc)
+        for _, _, pid, _, _ in parcels:
+            db.query(Parcel).filter(Parcel.id == pid).update({"last_scan_date": now})
         scan.status = ScanStatus.complete
         scan.parcels_scanned = scanned
         scan.parcels_flagged = flagged
-        scan.completed_at = datetime.now(timezone.utc)
+        scan.completed_at = now
         if errors:
             scan.error_message = f"{errors} parcels failed (see logs)"
         db.commit()
@@ -179,6 +209,7 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
         return {"parcels_scanned": scanned, "parcels_flagged": flagged, "errors": errors}
 
     except Exception as e:
+        db.rollback()
         scan.status = ScanStatus.failed
         scan.error_message = str(e)
         scan.completed_at = datetime.now(timezone.utc)

@@ -22,7 +22,7 @@ significant change for human review.
 - ORM: SQLAlchemy + GeoAlchemy2
 - Satellite Imagery: Google Earth Engine (GEE) Python API
 - Geospatial Processing: GeoPandas, Shapely, Rasterio
-- Scheduler: APScheduler (automated seasonal scans) — stubbed, not yet wired
+- Scheduler: APScheduler (automated annual scan, first Monday of November)
 - Frontend: React + Tailwind CSS + **MapLibre GL** via `react-map-gl` (migrated
   away from the originally-planned Leaflet)
 - Vector tiles: **tipg** (OGC Features/tiles served directly from PostGIS) — the
@@ -205,6 +205,48 @@ comparison (defaults to the two latest years), and a filmstrip of all years.
   Gunnison is also ~0.31m (WorldView-3, 2022). Zooming past that adds no detail.
 - Possible next step: NAIP-based detection (NDVI loss + brightness gain at
   sub-meter resolution) to catch small additions the 10m NDBI method misses.
+
+### Detection v2 — parcel-specific, building-aware (added 2026-10-07)
+Staff found nearly every flag showed no real change. Causes found:
+- 597 of 645 pending flags came from scan #5 (April 2026), which compared single
+  least-cloudy scenes; on the same parcels the median-composite method agreed with
+  only 19 of its 179 flags (delta correlation 0.38). Those 597 were bulk-dismissed
+  with an explanatory note (backup taken first); stuck scan #14 marked failed.
+- NDBI rises for dry grass/bare soil, and at 10m a lot is only 6–8 pixels, so new
+  roads or houses NEXT DOOR bleed into a parcel's mean.
+
+`services/detection.py` now calls `gee_service.get_parcel_change_batch` (1,000
+parcels per request, batches sorted into ~1km grid cells; full county ≈ 1 hour vs
+days for the old per-parcel calls). Per parcel, for Jun–Sep of both years:
+Dynamic World `built` probability + Cloud Score+ NDBI/NDVI over the parcel
+**interior** (5m trimmed) and a **ring** 10–60m outside it. Local change =
+interior change − ring change. Flag when local built change > `BUILT_LOCAL_THRESHOLD`
+(0.15) AND local NDBI change > `NDBI_LOCAL_THRESHOLD` (0.02) AND NDVI didn't rise
+> 0.10. Priority 1 when `parcels.improvements_value == 0` (vacant on the books;
+loaded from shapefile IMPSACTUAL via `load_shapefile.py --update-values`).
+New detection columns: built_before, built_after, built_local_delta,
+ndbi_local_delta (added by manual ALTER TABLE).
+
+Calibration (2021 vs 2023, checked against NAIP photos, random 8 per tier):
+built_local > 0.15 → 6/8 real construction; 0.08–0.15 → 2/8; 0.05–0.08 → 1–2/8.
+Ring subtraction lowers scores for whole new subdivisions (neighbors change too),
+so some townhome projects land in the lower tiers. County-wide 2021→2023:
+31 flags at the default thresholds, 80 at 0.10, 275 at 0.05.
+
+Lesson from this change: add DB columns BEFORE deploying a model that selects
+them (uvicorn --reload picked up the model first → 500s), and never hold a read
+transaction open across a long Earth Engine run (it blocked ALTER TABLE, which
+then blocked every parcel query). `run_detection` commits right after loading.
+
+### Satellite years in the aerial viewer (added 2026-10-07)
+`get_aerial_history` (renamed from `get_naip_history`) also returns Sentinel-2
+composites (`source: "sentinel2"`) for each completed season after the newest NAIP
+flight — no free sharp imagery of Gunnison exists past 2023 (NAIP, Microsoft
+Planetary Computer and Esri Wayback all checked; Wayback's newest local capture is
+Oct 2022). Labeled "satellite" everywhere; the viewer defaults to the two newest
+NAIP years. On small lots the 10m composite is mostly blur — useful only for large
+parcels. NAIP 2025 for Colorado was not yet delivered as of 2026-10-07; once it is
+in Earth Engine it appears automatically and replaces the 2025 satellite entry.
 
 ## Important Notes
 - GEE authentication uses a service account JSON key — never commit to git

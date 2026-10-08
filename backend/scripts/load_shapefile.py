@@ -22,10 +22,11 @@ Actual shapefile columns (Gunnison County Taxparcelassessor):
   PROPERTYLO        -> situs_address  (property location address)
   GISAcres          -> acres
   ACCOUNTTYP        -> land_use_code  (Residential, Commercial, etc.)
+  IMPSACTUAL        -> improvements_value  (0 = vacant on the books)
   jurisdiction      -> derived from situs_address (see derive_jurisdiction())
 
 Other useful columns available (not stored in Parcel table):
-  ACCOUNTNO, TOTALACTUA, IMPSACTUAL, LANDACTUAL, TAXDISTRIC, MILLLEVY,
+  ACCOUNTNO, TOTALACTUA, LANDACTUAL, TAXDISTRIC, MILLLEVY,
   SUBDIVISIO, LEGALDESCR, SALESAMOUN, SALEDATE, AssessorRe (URL)
 """
 import argparse
@@ -49,6 +50,7 @@ COLUMN_MAP = {
     "PROPERTYLO": "situs_address",
     "GISAcres": "acres",
     "ACCOUNTTYP": "land_use_code",
+    "IMPSACTUAL": "improvements_value",
 }
 
 JURISDICTION_KEYWORDS = {
@@ -69,10 +71,39 @@ def derive_jurisdiction(situs_address: str) -> str:
     return "Gunnison County"
 
 
+def _to_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def update_values(gdf) -> None:
+    """Refresh improvements_value for parcels already in the database."""
+    values = {}
+    for _, row in gdf.iterrows():
+        apn = str(row.get("apn", "")).strip()
+        if apn and apn not in values:
+            values[apn] = _to_float(row.get("improvements_value"))
+
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE parcels ADD COLUMN IF NOT EXISTS improvements_value DOUBLE PRECISION"))
+        conn.execute(
+            text("UPDATE parcels SET improvements_value = :v WHERE apn = :apn"),
+            [{"apn": apn, "v": v} for apn, v in values.items()],
+        )
+    print(f"Updated improvements_value for {len(values)} APNs")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Load parcel shapefile into PostGIS")
     parser.add_argument("--file", required=True, help="Path to .shp file")
     parser.add_argument("--dry-run", action="store_true", help="Parse only, do not insert")
+    parser.add_argument(
+        "--update-values",
+        action="store_true",
+        help="Only refresh improvements_value on existing parcels (by APN), insert nothing",
+    )
     args = parser.parse_args()
 
     print(f"Reading shapefile: {args.file}")
@@ -81,6 +112,10 @@ def main():
     print(f"  Columns: {list(gdf.columns)}")
 
     gdf = map_columns(gdf, COLUMN_MAP)
+
+    if args.update_values:
+        update_values(gdf)
+        return
 
     if args.dry_run:
         print("Dry run — first 3 rows:")
@@ -128,6 +163,7 @@ def main():
                 jurisdiction=derive_jurisdiction(situs),
                 acres=float(row["acres"]) if row.get("acres") else None,
                 land_use_code=str(row.get("land_use_code", "") or "").strip() or None,
+                improvements_value=_to_float(row.get("improvements_value")),
                 geometry=f"SRID=4326;{geom_wkt}",
             )
             db.add(parcel)

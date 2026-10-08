@@ -19,6 +19,14 @@ class Detection(Base):
     ndvi_before = Column(Float, nullable=True)
     ndvi_after = Column(Float, nullable=True)
 
+    # Dynamic World "built" probability (0-1), parcel interior, edge trimmed
+    built_before = Column(Float, nullable=True)
+    built_after = Column(Float, nullable=True)
+    # Parcel-specific change: interior change minus surrounding-ring change,
+    # so neighborhood-wide change (new road, whole subdivision) cancels out
+    built_local_delta = Column(Float, nullable=True)
+    ndbi_local_delta = Column(Float, nullable=True)
+
     # Image metadata
     image_date_before = Column(DateTime, nullable=True)
     image_date_after = Column(DateTime, nullable=True)

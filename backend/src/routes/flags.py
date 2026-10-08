@@ -92,9 +92,11 @@ def _flag_to_dict(f: Flag, parcel: Parcel = None, detection: Detection = None) -
             "apn": parcel.apn,
             "situs_address": parcel.situs_address,
             "owner_name": parcel.owner_name,
+            "improvements_value": parcel.improvements_value,
         } if parcel else None,
         "detection": {
             "ndbi_delta": detection.ndbi_delta,
             "confidence_score": detection.confidence_score,
+            "built_local_delta": detection.built_local_delta,
         } if detection else None,
     }

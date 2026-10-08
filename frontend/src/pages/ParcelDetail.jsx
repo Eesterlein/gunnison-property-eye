@@ -7,9 +7,12 @@ const TERM_INFO = {
   ndbi: "Normalized Difference Built-up Index — a satellite measurement that highlights rooftops, pavement, and other built surfaces. Higher values usually mean more built-up area.",
   delta: "The change in NDBI between the before and after periods. A large positive jump suggests new construction — parcels above the flagging threshold get flagged for review.",
   ndvi: "Normalized Difference Vegetation Index — measures plant/vegetation health. Used as a check: if vegetation increased a lot instead, the NDBI change is probably plant growth, not construction.",
-  confidence: "How far the NDBI change exceeded the flagging threshold, scaled 0–100%. Not a certainty score — always confirm visually or in person.",
+  confidence: "How far the parcel's built-up change exceeded the flagging threshold, scaled 0–100% (older scans: the NDBI change). Not a certainty score — always confirm visually or in person.",
   cloudCover: "Percent of the satellite image that was cloudy. Cloudy pixels are filtered out before computing these numbers; very high cloud cover means less reliable data went into the result.",
   imageDate: "Date of the clearest satellite pass used within this period's 6-month comparison window.",
+  built: "Probability (0–100%) that the parcel's interior is built-up — roofs, pavement — from Google Dynamic World, which is trained to tell buildings apart from grass, shrubs and bare ground.",
+  builtLocal: "How much more built-up the parcel became than the land around it. Change in the surrounding ring (a new road, a whole subdivision going in) is subtracted, so this reflects change on this parcel only.",
+  vacant: "The assessor's records carry $0 in improvements on this parcel. A newly detected building here is the strongest lead for unreported construction.",
 };
 
 function InfoLabel({ children, term }) {
@@ -25,6 +28,17 @@ function InfoLabel({ children, term }) {
     </span>
   );
 }
+
+// Satellite years (after the newest aerial flight) are ~10m and blurry —
+// always say so wherever a year is shown, so blur isn't mistaken for change.
+const isSatellite = (y) => y.source === "sentinel2";
+const yearTag = (y) => (isSatellite(y) ? `${y.year} · satellite` : `${y.year}`);
+const flightLabel = (y) =>
+  isSatellite(y)
+    ? `satellite composite, ${y.date_start} – ${y.date_end}, ~10m per pixel`
+    : y.date_start === y.date_end
+    ? `aerial, flown ${y.date_start}`
+    : `aerial, flown ${y.date_start} – ${y.date_end}`;
 
 // Two aligned images with a draggable divider: left year underneath, right
 // year clipped on top. `fit` sizes it to the viewport for the full-screen view.
@@ -102,8 +116,8 @@ function SwipeCompare({ before, after, fit = false }) {
           ◀▶
         </div>
       </div>
-      <span className="absolute top-2 left-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5 pointer-events-none">{before.year}</span>
-      <span className="absolute top-2 right-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5 pointer-events-none">{after.year}</span>
+      <span className="absolute top-2 left-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5 pointer-events-none">{yearTag(before)}</span>
+      <span className="absolute top-2 right-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5 pointer-events-none">{yearTag(after)}</span>
     </div>
   );
 }
@@ -120,7 +134,7 @@ function YearSelect({ label, value, onChange, years, dark = false }) {
         }`}
       >
         {years.map((y) => (
-          <option key={y.year} value={y.year}>{y.year}</option>
+          <option key={y.year} value={y.year}>{yearTag(y)}</option>
         ))}
       </select>
     </label>
@@ -171,17 +185,21 @@ function AerialCloseup({ parcelId, years, beforeYear, afterYear, setBeforeYear, 
         ) : (
           <SwipeCompare before={before} after={after} fit />
         )}
-        <p className="text-white/50 text-[11px]">
-          USDA NAIP aerial photography; parcel outline in yellow. Newer flights are sharper
-          (2023 ≈ 0.3m per pixel, older years 0.6–1m).
-        </p>
+        {before && after && (
+          <p className="text-white/50 text-[11px]">
+            Left: {flightLabel(before)}. Right: {flightLabel(after)}. Parcel outline in yellow.
+            Aerial years are USDA NAIP (2023 ≈ 0.3m per pixel, older 0.6–1m); satellite years are
+            Sentinel-2, far blurrier — use them only for large, obvious changes.
+          </p>
+        )}
       </div>
     </div>
   );
 }
 
-// Dated high-resolution NAIP aerial photos for every flight year, with a
-// swipe comparison between two chosen years. All years are rendered over the
+// Dated high-resolution NAIP aerial photos for every flight year (plus ~10m
+// satellite composites for newer seasons), with a swipe comparison between
+// two chosen years. All years are rendered over the
 // same extent, so the two images line up exactly when overlaid.
 function AerialHistory({ parcelId }) {
   const [years, setYears] = useState(null); // null = loading
@@ -198,9 +216,13 @@ function AerialHistory({ parcelId }) {
       .then((res) => {
         const ys = res.data.years || [];
         setYears(ys);
-        if (ys.length >= 2) {
-          setBeforeYear(ys[ys.length - 2].year);
-          setAfterYear(ys[ys.length - 1].year);
+        // Default to the two newest sharp aerial years; staff can switch to
+        // the blurrier satellite years for anything newer.
+        const aerial = ys.filter((y) => !isSatellite(y));
+        const pair = aerial.length >= 2 ? aerial.slice(-2) : ys.slice(-2);
+        if (pair.length === 2) {
+          setBeforeYear(pair[0].year);
+          setAfterYear(pair[1].year);
         }
       })
       .catch(() => setError("Failed to load aerial photos."));
@@ -214,9 +236,6 @@ function AerialHistory({ parcelId }) {
 
   const before = years.find((y) => y.year === beforeYear);
   const after = years.find((y) => y.year === afterYear);
-  const flightLabel = (y) =>
-    y.date_start === y.date_end ? `flown ${y.date_start}` : `flown ${y.date_start} – ${y.date_end}`;
-
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
@@ -234,8 +253,9 @@ function AerialHistory({ parcelId }) {
       <SwipeCompare before={before} after={after} />
       <p className="text-[11px] text-slate-400">
         Left: {before.year} ({flightLabel(before)}). Right: {after.year} ({flightLabel(after)}).
-        USDA NAIP aerial photography, roughly 0.3–1m per pixel; parcel outline in yellow.
-        NAIP is flown about every two years, so very recent construction may not appear yet.
+        Parcel outline in yellow. Aerial photos (USDA NAIP, roughly 0.3–1m per pixel) are flown
+        about every two years; years after the newest flight are Sentinel-2 satellite composites
+        (~10m per pixel, much blurrier) until the next aerial flight is published.
       </p>
 
       {/* Every year at a glance — click to put a year on the left */}
@@ -251,7 +271,10 @@ function AerialHistory({ parcelId }) {
             }`}
           >
             <img src={y.url} alt={`Aerial photo ${y.year}`} loading="lazy" className="w-full rounded-sm" />
-            <span className="block text-[11px] text-slate-600 px-0.5">{y.year}</span>
+            <span className="block text-[11px] text-slate-600 px-0.5">
+              {y.year}
+              {isSatellite(y) && <span className="text-amber-700"> · satellite</span>}
+            </span>
           </button>
         ))}
       </div>
@@ -404,6 +427,18 @@ export default function ParcelDetail() {
           <p><span className="text-slate-400">Jurisdiction:</span> {parcel.jurisdiction || "—"}</p>
           <p><span className="text-slate-400">Acres:</span> {parcel.acres ?? "—"}</p>
           <p><span className="text-slate-400">Land use:</span> {parcel.land_use_code || "—"}</p>
+          <p>
+            <span className="text-slate-400">Improvements (assessor):</span>{" "}
+            {parcel.improvements_value == null ? (
+              "—"
+            ) : parcel.improvements_value === 0 ? (
+              <span className="text-red-700 font-medium">
+                <InfoLabel term="vacant">$0 — vacant on books</InfoLabel>
+              </span>
+            ) : (
+              `$${Math.round(parcel.improvements_value).toLocaleString()}`
+            )}
+          </p>
           {parcel.last_scan_date && (
             <p><span className="text-slate-400">Last scan:</span> {new Date(parcel.last_scan_date).toLocaleDateString()}</p>
           )}
@@ -536,6 +571,24 @@ export default function ParcelDetail() {
                   )}
                 </div>
                 <div className="grid grid-cols-3 gap-x-2 gap-y-3 text-xs text-slate-600">
+                  {d.built_local_delta != null && (
+                    <>
+                      <div>
+                        <p className="text-slate-400 mb-0.5"><InfoLabel term="built">Built before</InfoLabel></p>
+                        <p className="font-mono">{d.built_before != null ? `${(d.built_before * 100).toFixed(0)}%` : "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400 mb-0.5"><InfoLabel term="built">Built after</InfoLabel></p>
+                        <p className="font-mono">{d.built_after != null ? `${(d.built_after * 100).toFixed(0)}%` : "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400 mb-0.5"><InfoLabel term="builtLocal">Change vs. surroundings</InfoLabel></p>
+                        <p className={`font-mono font-semibold ${d.built_local_delta > 0.15 ? "text-red-600" : "text-slate-600"}`}>
+                          {`${d.built_local_delta > 0 ? "+" : ""}${(d.built_local_delta * 100).toFixed(0)} pts`}
+                        </p>
+                      </div>
+                    </>
+                  )}
                   <div>
                     <p className="text-slate-400 mb-0.5"><InfoLabel term="ndbi">NDBI before</InfoLabel></p>
                     <p className="font-mono">{d.ndbi_before ?? "—"}</p>

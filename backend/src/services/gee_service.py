@@ -220,22 +220,32 @@ def get_thumbnail_url(
 NAIP_COLLECTION = "USDA/NAIP/DOQQ"
 
 
-def get_naip_history(
+def _latest_complete_season() -> int:
+    """Most recent year whose June–September core season has fully elapsed."""
+    today = datetime.utcnow().date()
+    return today.year if today.month >= 10 else today.year - 1
+
+
+def get_aerial_history(
     geometry_wkt: str,
     buffer_m: int = 40,
     dimensions: int = 768,
     years: list[int] | None = None,
 ) -> list[dict]:
     """
-    Every NAIP flight year covering the parcel, oldest first, each with a
-    true-color thumbnail URL (parcel outline drawn in yellow) and the
-    acquisition date range of the tiles that make up that year's mosaic.
+    Every year of imagery covering the parcel, oldest first, each with a
+    true-color thumbnail URL (parcel outline drawn in yellow) and its date range:
+      - source "naip": every NAIP aerial flight year (sharp, ~every 2 years)
+      - source "sentinel2": each completed season AFTER the newest NAIP flight,
+        as a ~10m satellite composite — blurry, but the only free imagery for
+        those years until the next NAIP flight is published. Superseded
+        automatically once NAIP for that year appears in Earth Engine.
 
     All years share the same region and dimensions, so the images line up
     pixel-for-pixel and can be overlaid in a swipe comparison.
 
-    years limits rendering to those flight years (e.g. the two being compared
-    in the full-screen close-up, which uses a tighter buffer and larger size).
+    years limits rendering to those years (e.g. the two being compared in the
+    full-screen close-up, which uses a tighter buffer and larger size).
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -243,16 +253,15 @@ def get_naip_history(
 
     geom = _wkt_to_ee_geometry(geometry_wkt)
     region = geom.buffer(buffer_m).bounds()
-    collection = ee.ImageCollection(NAIP_COLLECTION).filterBounds(region)
+    naip = ee.ImageCollection(NAIP_COLLECTION).filterBounds(region)
 
-    timestamps = collection.aggregate_array("system:time_start").getInfo()
-    if not timestamps:
-        return []
-
-    dates_by_year: dict[int, list[str]] = {}
-    for ts in timestamps:
+    naip_dates: dict[int, list[str]] = {}
+    for ts in naip.aggregate_array("system:time_start").getInfo() or []:
         d = datetime.utcfromtimestamp(ts / 1000).date()
-        dates_by_year.setdefault(d.year, []).append(d.isoformat())
+        naip_dates.setdefault(d.year, []).append(d.isoformat())
+
+    first_satellite_year = max(naip_dates, default=2018) + 1
+    satellite_years = list(range(first_satellite_year, _latest_complete_season() + 1))
 
     outline = (
         ee.Image()
@@ -260,31 +269,142 @@ def get_naip_history(
         .paint(ee.FeatureCollection([ee.Feature(geom)]), 1, max(2, dimensions // 512))
         .visualize(palette=["facc15"])
     )
+    # Unbounded background so every year renders the full region — a
+    # thumbnail is otherwise cropped to the imagery's footprint and years
+    # wouldn't line up when a parcel sits near a tile edge.
+    background = (
+        ee.Image.constant([241, 245, 249])
+        .rename(["vis-red", "vis-green", "vis-blue"])
+        .uint8()
+    )
 
-    def _year_entry(year: int) -> dict:
+    def _thumb(vis: ee.Image) -> str:
+        return ee.ImageCollection([background, vis, outline]).mosaic().getThumbURL(
+            {"region": region, "dimensions": dimensions, "format": "png"}
+        )
+
+    def _naip_entry(year: int) -> dict:
         # Bicubic resampling — the default nearest-neighbor renders hard-edged
         # pixel blocks whenever the thumbnail is finer than the source imagery.
         mosaic = (
-            collection.filter(ee.Filter.calendarRange(year, year, "year"))
+            naip.filter(ee.Filter.calendarRange(year, year, "year"))
             .map(lambda img: img.resample("bicubic"))
             .mosaic()
         )
-        vis = mosaic.visualize(bands=["R", "G", "B"], min=0, max=255)
-        # Unbounded background so every year renders the full region — a
-        # thumbnail is otherwise cropped to the flight's tile footprint and
-        # years wouldn't line up when a parcel sits near a tile edge.
-        background = (
-            ee.Image.constant([241, 245, 249])
-            .rename(["vis-red", "vis-green", "vis-blue"])
-            .uint8()
-        )
-        url = ee.ImageCollection([background, vis, outline]).mosaic().getThumbURL(
-            {"region": region, "dimensions": dimensions, "format": "png"}
-        )
-        dates = sorted(dates_by_year[year])
-        return {"year": year, "date_start": dates[0], "date_end": dates[-1], "url": url}
+        dates = sorted(naip_dates[year])
+        return {
+            "year": year,
+            "source": "naip",
+            "date_start": dates[0],
+            "date_end": dates[-1],
+            "url": _thumb(mosaic.visualize(bands=["R", "G", "B"], min=0, max=255)),
+        }
+
+    def _satellite_entry(year: int) -> dict | None:
+        start, end = _core_season(year)
+        collection = _masked_collection(region, start, end).map(lambda img: img.resample("bicubic"))
+        if collection.size().getInfo() == 0:
+            return None
+        # Same display stretch as get_thumbnail_url
+        vis = collection.median().visualize(bands=["B4", "B3", "B2"], min=0, max=3000, gamma=1.4)
+        return {"year": year, "source": "sentinel2", "date_start": start, "date_end": end, "url": _thumb(vis)}
+
+    jobs = [(_naip_entry, y) for y in sorted(naip_dates)] + [(_satellite_entry, y) for y in satellite_years]
+    jobs = [(fn, y) for fn, y in jobs if years is None or y in years]
 
     # getThumbURL is one round trip per year — run them concurrently.
     with ThreadPoolExecutor(max_workers=6) as pool:
-        wanted = [y for y in sorted(dates_by_year) if years is None or y in years]
-        return list(pool.map(_year_entry, wanted))
+        entries = list(pool.map(lambda job: job[0](job[1]), jobs))
+    return [e for e in entries if e is not None]
+
+
+# ── Parcel-specific change (detection v2) ────────────────────────────────────
+# At 10m/pixel a typical lot is only 6-8 pixels, so new roads or houses on
+# neighboring lots bleed into the parcel's average. v2 measures the parcel
+# interior (edge trimmed) and subtracts the change in a surrounding ring, so
+# neighborhood-wide change (a subdivision getting paved) cancels out and only
+# change specific to this parcel remains. It also uses Dynamic World's per-pixel
+# "built" probability, which is trained to separate buildings from grass/bare
+# ground — NDBI alone rises for dry grass and bare soil too.
+INNER_TRIM_M = 5        # trimmed off the parcel boundary before measuring
+RING_GAP_M = 10         # ring starts this far outside the parcel...
+RING_WIDTH_M = 50       # ...and extends this much further
+MIN_INNER_AREA_M2 = 300  # below this, trimming would leave too few pixels
+
+DW_BANDS = ["built", "grass", "bare", "shrub_and_scrub", "trees"]
+
+
+def _core_season(year: int) -> tuple[str, str]:
+    """June-September: the snow-free core of the season at 7,700-12,000 ft."""
+    return f"{year}-06-01", f"{year}-09-30"
+
+
+def _season_layers(region: ee.Geometry, year: int, suffix: str) -> ee.Image:
+    start, end = _core_season(year)
+    dw = (
+        ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
+        .filterBounds(region)
+        .filterDate(start, end)
+        .select(DW_BANDS)
+        .median()
+    )
+    s2 = _masked_collection(region, start, end).median()
+    return (
+        dw.addBands(_compute_ndbi(s2))
+        .addBands(_compute_ndvi(s2))
+        .rename([f"{b}_{suffix}" for b in DW_BANDS + ["ndbi", "ndvi"]])
+    )
+
+
+def get_parcel_change_batch(
+    parcels: list[tuple[int, str]], before_year: int, after_year: int
+) -> dict[int, dict]:
+    """
+    Before/after Dynamic World + NDBI/NDVI means for many parcels in two
+    Earth Engine requests (interior, ring). parcels is [(parcel_id, wkt)];
+    spatially-compact batches of ~1,000-1,500 run fastest.
+
+    Returns {parcel_id: {"inner": {...band means, "count"}, "ring": {...}}}.
+    """
+    initialize()
+
+    fc = ee.FeatureCollection(
+        [ee.Feature(_wkt_to_ee_geometry(wkt), {"pid": pid}) for pid, wkt in parcels]
+    )
+    region = fc.geometry().bounds().buffer(RING_GAP_M + RING_WIDTH_M + 100)
+    image = _season_layers(region, before_year, "b").addBands(
+        _season_layers(region, after_year, "a")
+    )
+
+    def _inner(f):
+        g = f.geometry()
+        trimmed = g.buffer(-INNER_TRIM_M, 1)
+        return f.setGeometry(
+            ee.Geometry(ee.Algorithms.If(trimmed.area(1).gte(MIN_INNER_AREA_M2), trimmed, g))
+        )
+
+    def _ring(f):
+        g = f.geometry()
+        outer = g.buffer(RING_GAP_M + RING_WIDTH_M, 1)
+        return f.setGeometry(outer.difference(g.buffer(RING_GAP_M, 1), 1))
+
+    out: dict[int, dict] = {}
+    for key, mapper in (("inner", _inner), ("ring", _ring)):
+        res = image.reduceRegions(
+            collection=fc.map(mapper),
+            reducer=ee.Reducer.mean(),
+            scale=10,
+            tileScale=4,
+        ).getInfo()["features"]
+        for f in res:
+            p = f["properties"]
+            out.setdefault(p.pop("pid"), {})[key] = p
+
+    # Pixel counts for the interior only (one extra lightweight request).
+    counts = image.select("ndbi_a").reduceRegions(
+        collection=fc.map(_inner), reducer=ee.Reducer.count(), scale=10, tileScale=4
+    ).getInfo()["features"]
+    for f in counts:
+        out[f["properties"]["pid"]]["inner"]["count"] = f["properties"].get("count", 0)
+
+    return out

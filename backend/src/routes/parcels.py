@@ -127,7 +127,8 @@ def get_parcel_aerial_history(
 ):
     """
     Dated high-resolution NAIP aerial photos of the parcel for every flight
-    year available (~every 2 years since 2005), for visual change review.
+    year available (~every 2 years since 2005), plus ~10m satellite composites
+    for newer seasons not yet covered by NAIP, for visual change review.
     """
     from geoalchemy2.shape import to_shape
 
@@ -136,7 +137,7 @@ def get_parcel_aerial_history(
         raise HTTPException(status_code=404, detail="Parcel not found")
 
     wkt = to_shape(parcel.geometry).wkt
-    return {"years": gee_service.get_naip_history(wkt)}
+    return {"years": gee_service.get_aerial_history(wkt)}
 
 
 @router.get("/{parcel_id}/aerial-closeup")
@@ -147,7 +148,7 @@ def get_parcel_aerial_closeup(
     _user=Depends(get_current_user),
 ):
     """
-    Large, tightly framed NAIP renders of the requested years for the
+    Large, tightly framed renders of the requested years for the
     full-screen swipe comparison.
     """
     from geoalchemy2.shape import to_shape
@@ -165,7 +166,7 @@ def get_parcel_aerial_closeup(
 
     wkt = to_shape(parcel.geometry).wkt
     return {
-        "years": gee_service.get_naip_history(wkt, buffer_m=10, dimensions=2048, years=year_list)
+        "years": gee_service.get_aerial_history(wkt, buffer_m=10, dimensions=2048, years=year_list)
     }
 
 
@@ -178,5 +179,6 @@ def _parcel_to_dict(p: Parcel) -> dict:
         "jurisdiction": p.jurisdiction,
         "acres": p.acres,
         "land_use_code": p.land_use_code,
+        "improvements_value": p.improvements_value,
         "last_scan_date": p.last_scan_date,
     }

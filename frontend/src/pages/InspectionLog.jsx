@@ -16,11 +16,13 @@ const STATUS_COLORS = {
 };
 
 function toCsv(flags) {
-  const header = ["APN", "Address", "Owner", "NDBI Delta", "Confidence", "Status", "Flagged"];
+  const header = ["APN", "Address", "Owner", "Vacant on books", "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
   const rows = flags.map((f) => [
     f.parcel?.apn ?? "",
     f.parcel?.situs_address ?? "",
     f.parcel?.owner_name ?? "",
+    f.parcel?.improvements_value === 0 ? "yes" : "no",
+    f.detection?.built_local_delta ?? "",
     f.detection?.ndbi_delta ?? "",
     f.detection?.confidence_score != null ? Math.round(f.detection.confidence_score * 100) : "",
     f.status,
@@ -120,6 +122,7 @@ export default function InspectionLog() {
               <th className="text-left px-3 py-2 font-medium text-slate-600">APN</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Address</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Owner</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600" title="Parcel-specific change in the probability that the land is built-up, after subtracting change in the surrounding area">Built change</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">NDBI Delta</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Confidence</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Status</th>
@@ -131,8 +134,23 @@ export default function InspectionLog() {
             {flags.map((flag) => (
               <tr key={flag.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-3 py-2 font-mono text-xs">{flag.parcel?.apn}</td>
-                <td className="px-3 py-2">{flag.parcel?.situs_address}</td>
+                <td className="px-3 py-2">
+                  {flag.parcel?.situs_address}
+                  {flag.parcel?.improvements_value === 0 && (
+                    <span
+                      className="ml-2 text-[10px] font-medium bg-red-100 text-red-700 rounded px-1.5 py-0.5 whitespace-nowrap"
+                      title="Assessor carries $0 in improvements on this parcel"
+                    >
+                      Vacant on books
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2">{flag.parcel?.owner_name}</td>
+                <td className="px-3 py-2">
+                  {flag.detection?.built_local_delta != null
+                    ? `+${(flag.detection.built_local_delta * 100).toFixed(0)} pts`
+                    : "—"}
+                </td>
                 <td className="px-3 py-2">{flag.detection?.ndbi_delta?.toFixed(3)}</td>
                 <td className="px-3 py-2">
                   {flag.detection?.confidence_score != null

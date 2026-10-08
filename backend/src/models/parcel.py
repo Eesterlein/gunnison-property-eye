@@ -14,6 +14,9 @@ class Parcel(Base):
     jurisdiction = Column(String(100))  # Gunnison County, City of Gunnison, etc.
     acres = Column(Float)
     land_use_code = Column(String(50))
+    # Assessor's actual value of improvements (IMPSACTUAL). 0 = vacant on the
+    # books, so a new building detected there is the strongest lead.
+    improvements_value = Column(Float, nullable=True)
     geometry = Column(Geometry(srid=4326), nullable=False)
     last_scan_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
