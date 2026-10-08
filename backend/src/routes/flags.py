@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from src.database import get_db
-from src.models import Flag, FlagStatus, User
+from src.models import Flag, FlagStatus, User, Parcel, Detection
 from src.middleware.auth import get_current_user
 
 router = APIRouter()
@@ -40,14 +40,16 @@ def list_flags(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    query = db.query(Flag)
+    query = db.query(Flag, Parcel, Detection).join(Parcel, Flag.parcel_id == Parcel.id).join(
+        Detection, Flag.detection_id == Detection.id
+    )
     if status:
         query = query.filter(Flag.status == status)
     if parcel_id:
         query = query.filter(Flag.parcel_id == parcel_id)
     total = query.count()
-    flags = query.order_by(Flag.created_at.desc()).offset(skip).limit(limit).all()
-    return {"total": total, "flags": [_flag_to_dict(f) for f in flags]}
+    rows = query.order_by(Flag.created_at.desc()).offset(skip).limit(limit).all()
+    return {"total": total, "flags": [_flag_to_dict(f, parcel, detection) for f, parcel, detection in rows]}
 
 
 @router.patch("/{flag_id}")
@@ -69,10 +71,13 @@ def update_flag(
     flag.reviewed_at = datetime.utcnow()
     db.commit()
     db.refresh(flag)
-    return _flag_to_dict(flag)
+
+    parcel = db.query(Parcel).filter(Parcel.id == flag.parcel_id).first()
+    detection = db.query(Detection).filter(Detection.id == flag.detection_id).first()
+    return _flag_to_dict(flag, parcel, detection)
 
 
-def _flag_to_dict(f: Flag) -> dict:
+def _flag_to_dict(f: Flag, parcel: Parcel = None, detection: Detection = None) -> dict:
     return {
         "id": f.id,
         "parcel_id": f.parcel_id,
@@ -83,4 +88,13 @@ def _flag_to_dict(f: Flag) -> dict:
         "notes": f.notes,
         "priority": f.priority,
         "created_at": f.created_at,
+        "parcel": {
+            "apn": parcel.apn,
+            "situs_address": parcel.situs_address,
+            "owner_name": parcel.owner_name,
+        } if parcel else None,
+        "detection": {
+            "ndbi_delta": detection.ndbi_delta,
+            "confidence_score": detection.confidence_score,
+        } if detection else None,
     }

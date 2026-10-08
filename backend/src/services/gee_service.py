@@ -45,15 +45,42 @@ def initialize():
     print(f"GEE initialized (project: {PROJECT})")
 
 
-def _mask_clouds(image: ee.Image) -> ee.Image:
+# Cloud Score+ band used for masking. "cs" is the basic quality score;
+# "cs_cdf" is the cumulative-distribution variant. Pixels scoring below
+# CLOUD_SCORE_THRESHOLD (0–1, higher = clearer) are masked out.
+CLOUD_SCORE_BAND = "cs"
+
+
+def _masked_collection(
+    geometry: ee.Geometry, start_date: str, end_date: str
+) -> ee.ImageCollection:
     """
-    Mask clouds using Sentinel-2's Scene Classification Layer (SCL band).
-    Keep only clear vegetation (4), bare soil (5), water (6), unclassified (7).
-    Removes clouds (8,9), cirrus (10), snow (11).
+    Build a Sentinel-2 SR collection over the geometry/date range with per-pixel
+    cloud masking applied via GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED.
+
+    Each S2 scene is linked to its Cloud Score+ counterpart and pixels below the
+    cloud-score threshold are masked before any index is computed. This is what
+    the detection method promises — without it, NDBI would be computed over
+    cloud tops and produce spurious deltas.
     """
-    scl = image.select("SCL")
-    clear_mask = scl.eq(4).Or(scl.eq(5)).Or(scl.eq(6)).Or(scl.eq(7))
-    return image.updateMask(clear_mask)
+    s2 = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterBounds(geometry)
+        .filterDate(start_date, end_date)
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
+    )
+    cloud_score = (
+        ee.ImageCollection("GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED")
+        .filterBounds(geometry)
+        .filterDate(start_date, end_date)
+    )
+    linked = s2.linkCollection(cloud_score, [CLOUD_SCORE_BAND])
+
+    def _apply_mask(image: ee.Image) -> ee.Image:
+        clear = image.select(CLOUD_SCORE_BAND).gte(CLOUD_SCORE_THRESHOLD)
+        return image.updateMask(clear)
+
+    return linked.map(_apply_mask)
 
 
 def _compute_ndbi(image: ee.Image) -> ee.Image:
@@ -64,24 +91,6 @@ def _compute_ndbi(image: ee.Image) -> ee.Image:
 def _compute_ndvi(image: ee.Image) -> ee.Image:
     """NDVI = (B8 - B4) / (B8 + B4)"""
     return image.normalizedDifference(["B8", "B4"]).rename("NDVI")
-
-
-def _best_image(geometry: ee.Geometry, start_date: str, end_date: str) -> ee.Image | None:
-    """
-    Get the least-cloudy Sentinel-2 image for a geometry and date range.
-    Returns None if no images found.
-    """
-    collection = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterBounds(geometry)
-        .filterDate(start_date, end_date)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
-        .sort("CLOUDY_PIXEL_PERCENTAGE")
-    )
-    size = collection.size().getInfo()
-    if size == 0:
-        return None
-    return collection.first()
 
 
 def get_ndbi_for_parcel(geometry_wkt: str, start_date: str, end_date: str) -> dict:
@@ -102,8 +111,17 @@ def get_ndbi_for_parcel(geometry_wkt: str, start_date: str, end_date: str) -> di
     # Parse WKT → GEE geometry via shapely → GeoJSON dict
     geom = _wkt_to_ee_geometry(geometry_wkt)
 
-    image = _best_image(geom, start_date, end_date)
-    if image is None:
+    collection = _masked_collection(geom, start_date, end_date)
+
+    # Metadata about the contributing scenes (one round trip).
+    # aggregate_* return None on an empty collection.
+    meta = ee.Dictionary({
+        "count": collection.size(),
+        "cloud_mean": collection.aggregate_mean("CLOUDY_PIXEL_PERCENTAGE"),
+        "latest": collection.aggregate_max("system:time_start"),
+    }).getInfo()
+
+    if not meta.get("count"):
         return {
             "ndbi_mean": None,
             "ndvi_mean": None,
@@ -113,9 +131,12 @@ def get_ndbi_for_parcel(geometry_wkt: str, start_date: str, end_date: str) -> di
             "usable": False,
         }
 
-    # Compute indices (already filtered to lowest cloud cover image)
-    ndbi = _compute_ndbi(image)
-    ndvi = _compute_ndvi(image)
+    # Median composite over the (cloud-masked) seasonal window. A composite is
+    # more robust than any single scene: masked-out cloudy pixels in one image
+    # are filled from clear observations in others.
+    composite = collection.median()
+    ndbi = _compute_ndbi(composite)
+    ndvi = _compute_ndvi(composite)
 
     # Stack and reduce over parcel
     # sharedInputs=True → both reducers apply to all bands → keys are NDBI_mean, NDVI_mean, etc.
@@ -133,8 +154,9 @@ def get_ndbi_for_parcel(geometry_wkt: str, start_date: str, end_date: str) -> di
     ndvi_mean = stats.get("NDVI_mean")
     pixel_count = int(stats.get("NDBI_count") or 0)
 
-    cloud_pct = image.get("CLOUDY_PIXEL_PERCENTAGE").getInfo()
-    ts = image.get("system:time_start").getInfo()
+    cloud_pct = meta.get("cloud_mean")
+    ts = meta.get("latest")
+    # image_date = most recent contributing acquisition in the window
     image_date = datetime.utcfromtimestamp(ts / 1000) if ts else None
 
     usable = pixel_count >= MIN_PIXEL_COUNT and ndbi_mean is not None
@@ -157,3 +179,35 @@ def _wkt_to_ee_geometry(wkt: str) -> ee.Geometry:
     from shapely.wkt import loads as wkt_loads
     geom = wkt_loads(wkt)
     return ee.Geometry(geom.__geo_interface__)
+
+
+def get_thumbnail_url(
+    geometry_wkt: str,
+    start_date: str,
+    end_date: str,
+    buffer_m: int = 60,
+    dimensions: int = 480,
+) -> str | None:
+    """
+    Generate a true-color Sentinel-2 thumbnail URL for a parcel over a date range,
+    so staff can visually confirm an NDBI-flagged change instead of reading raw
+    index values. Uses the same cloud-masked median composite as get_ndbi_for_parcel.
+
+    buffer_m pads the parcel bounds so the thumbnail shows surrounding context
+    (a small parcel alone can render as a sliver too narrow to interpret).
+
+    Returns None if no cloud-masked imagery is available for the window.
+    """
+    initialize()
+
+    geom = _wkt_to_ee_geometry(geometry_wkt)
+    collection = _masked_collection(geom, start_date, end_date)
+    if collection.size().getInfo() == 0:
+        return None
+
+    composite = collection.median()
+    region = geom.buffer(buffer_m).bounds()
+    # Sentinel-2 SR reflectance is scaled 0-10000; 0-3000 is the standard
+    # display stretch for well-exposed true-color scenes.
+    vis = composite.visualize(bands=["B4", "B3", "B2"], min=0, max=3000, gamma=1.4)
+    return vis.getThumbURL({"region": region, "dimensions": dimensions, "format": "png"})

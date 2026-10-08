@@ -2,6 +2,30 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import api from "../api";
 
+// Plain-language explanations for the detection jargon, shown on hover.
+const TERM_INFO = {
+  ndbi: "Normalized Difference Built-up Index — a satellite measurement that highlights rooftops, pavement, and other built surfaces. Higher values usually mean more built-up area.",
+  delta: "The change in NDBI between the before and after periods. A large positive jump suggests new construction — parcels above the flagging threshold get flagged for review.",
+  ndvi: "Normalized Difference Vegetation Index — measures plant/vegetation health. Used as a check: if vegetation increased a lot instead, the NDBI change is probably plant growth, not construction.",
+  confidence: "How far the NDBI change exceeded the flagging threshold, scaled 0–100%. Not a certainty score — always confirm visually or in person.",
+  cloudCover: "Percent of the satellite image that was cloudy. Cloudy pixels are filtered out before computing these numbers; very high cloud cover means less reliable data went into the result.",
+  imageDate: "Date of the clearest satellite pass used within this period's 6-month comparison window.",
+};
+
+function InfoLabel({ children, term }) {
+  return (
+    <span className="relative inline-flex items-center gap-1 group/tip cursor-help">
+      {children}
+      <span className="text-slate-300 border border-slate-300 rounded-full w-3 h-3 flex items-center justify-center text-[8px] leading-none shrink-0">
+        ?
+      </span>
+      <span className="hidden group-hover/tip:block absolute top-full left-0 mt-1 w-52 bg-slate-800 text-white text-[11px] leading-snug rounded px-2 py-1.5 z-20 normal-case font-normal">
+        {TERM_INFO[term]}
+      </span>
+    </span>
+  );
+}
+
 export default function ParcelDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -16,6 +40,10 @@ export default function ParcelDetail() {
   const [reviewingFlag, setReviewingFlag] = useState(null); // flag id
   const [reviewNotes, setReviewNotes] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
+
+  // Satellite imagery state, keyed by scan_id
+  const [imagery, setImagery] = useState({});
+  const [lightbox, setLightbox] = useState(null); // { beforeUrl, afterUrl, beforeRange, afterRange }
 
   useEffect(() => {
     loadAll();
@@ -60,6 +88,19 @@ export default function ParcelDetail() {
     }
   }
 
+  async function loadImagery(scanId) {
+    setImagery((prev) => ({ ...prev, [scanId]: { loading: true } }));
+    try {
+      const res = await api.get(`/api/parcels/${id}/imagery`, { params: { scan_id: scanId } });
+      setImagery((prev) => ({ ...prev, [scanId]: { loading: false, ...res.data } }));
+    } catch {
+      setImagery((prev) => ({
+        ...prev,
+        [scanId]: { loading: false, error: "Failed to load satellite imagery." },
+      }));
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-slate-400 text-sm">
@@ -71,9 +112,14 @@ export default function ParcelDetail() {
   if (error) {
     return (
       <div className="max-w-2xl mx-auto p-6">
-        <Link to="/map" className="text-sm text-blue-600 hover:underline mb-4 block">
-          ← Back to map
-        </Link>
+        <div className="flex gap-4 mb-4">
+          <Link to="/map" className="text-sm text-blue-600 hover:underline">
+            ← Back to map
+          </Link>
+          <Link to="/inspections" className="text-sm text-blue-600 hover:underline">
+            ← Back to flagged parcels
+          </Link>
+        </div>
         <p className="text-red-600">{error}</p>
       </div>
     );
@@ -83,9 +129,14 @@ export default function ParcelDetail() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6 overflow-y-auto h-full">
-      <Link to="/map" className="text-sm text-blue-600 hover:underline block">
-        ← Back to map
-      </Link>
+      <div className="flex gap-4">
+        <Link to="/map" className="text-sm text-blue-600 hover:underline">
+          ← Back to map
+        </Link>
+        <Link to="/inspections" className="text-sm text-blue-600 hover:underline">
+          ← Back to flagged parcels
+        </Link>
+      </div>
 
       {/* Parcel header */}
       <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-1">
@@ -232,17 +283,17 @@ export default function ParcelDetail() {
                     </span>
                   )}
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-xs text-slate-600">
+                <div className="grid grid-cols-3 gap-x-2 gap-y-3 text-xs text-slate-600">
                   <div>
-                    <p className="text-slate-400 mb-0.5">NDBI before</p>
+                    <p className="text-slate-400 mb-0.5"><InfoLabel term="ndbi">NDBI before</InfoLabel></p>
                     <p className="font-mono">{d.ndbi_before ?? "—"}</p>
                   </div>
                   <div>
-                    <p className="text-slate-400 mb-0.5">NDBI after</p>
+                    <p className="text-slate-400 mb-0.5"><InfoLabel term="ndbi">NDBI after</InfoLabel></p>
                     <p className="font-mono">{d.ndbi_after ?? "—"}</p>
                   </div>
                   <div>
-                    <p className="text-slate-400 mb-0.5">Delta</p>
+                    <p className="text-slate-400 mb-0.5"><InfoLabel term="delta">Delta</InfoLabel></p>
                     <p
                       className={`font-mono font-semibold ${
                         d.ndbi_delta > 0.15
@@ -252,19 +303,19 @@ export default function ParcelDetail() {
                           : "text-slate-600"
                       }`}
                     >
-                      {d.ndbi_delta != null ? `+${d.ndbi_delta}` : "—"}
+                      {d.ndbi_delta != null ? `${d.ndbi_delta > 0 ? "+" : ""}${d.ndbi_delta}` : "—"}
                     </p>
                   </div>
                   <div>
-                    <p className="text-slate-400 mb-0.5">NDVI before</p>
+                    <p className="text-slate-400 mb-0.5"><InfoLabel term="ndvi">NDVI before</InfoLabel></p>
                     <p className="font-mono">{d.ndvi_before ?? "—"}</p>
                   </div>
                   <div>
-                    <p className="text-slate-400 mb-0.5">NDVI after</p>
+                    <p className="text-slate-400 mb-0.5"><InfoLabel term="ndvi">NDVI after</InfoLabel></p>
                     <p className="font-mono">{d.ndvi_after ?? "—"}</p>
                   </div>
                   <div>
-                    <p className="text-slate-400 mb-0.5">Confidence</p>
+                    <p className="text-slate-400 mb-0.5"><InfoLabel term="confidence">Confidence</InfoLabel></p>
                     <p className="font-mono">
                       {d.confidence_score != null
                         ? `${(d.confidence_score * 100).toFixed(0)}%`
@@ -273,21 +324,77 @@ export default function ParcelDetail() {
                   </div>
                   {d.image_date_before && (
                     <div>
-                      <p className="text-slate-400 mb-0.5">Image before</p>
+                      <p className="text-slate-400 mb-0.5"><InfoLabel term="imageDate">Image before</InfoLabel></p>
                       <p>{new Date(d.image_date_before).toLocaleDateString()}</p>
                     </div>
                   )}
                   {d.image_date_after && (
                     <div>
-                      <p className="text-slate-400 mb-0.5">Image after</p>
+                      <p className="text-slate-400 mb-0.5"><InfoLabel term="imageDate">Image after</InfoLabel></p>
                       <p>{new Date(d.image_date_after).toLocaleDateString()}</p>
                     </div>
                   )}
                   {d.cloud_coverage_pct != null && (
                     <div>
-                      <p className="text-slate-400 mb-0.5">Cloud cover</p>
+                      <p className="text-slate-400 mb-0.5"><InfoLabel term="cloudCover">Cloud cover</InfoLabel></p>
                       <p>{d.cloud_coverage_pct}%</p>
                     </div>
+                  )}
+                </div>
+
+                {/* Satellite imagery */}
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  {!imagery[d.scan_id] ? (
+                    <button
+                      onClick={() => loadImagery(d.scan_id)}
+                      className="text-xs text-blue-600 hover:underline font-medium"
+                    >
+                      View satellite imagery
+                    </button>
+                  ) : imagery[d.scan_id].loading ? (
+                    <p className="text-xs text-slate-400">Loading satellite imagery…</p>
+                  ) : imagery[d.scan_id].error ? (
+                    <p className="text-xs text-red-600">{imagery[d.scan_id].error}</p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-xs text-slate-400 mb-1">
+                            Before ({imagery[d.scan_id].before_range?.join(" – ")})
+                          </p>
+                          {imagery[d.scan_id].before_url ? (
+                            <img
+                              src={imagery[d.scan_id].before_url}
+                              alt="Before satellite imagery"
+                              onClick={() => setLightbox(imagery[d.scan_id])}
+                              className="w-full rounded border border-slate-200 cursor-zoom-in hover:opacity-90 transition-opacity"
+                            />
+                          ) : (
+                            <p className="text-xs text-slate-400 italic">No clear imagery available</p>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-1">
+                            After ({imagery[d.scan_id].after_range?.join(" – ")})
+                          </p>
+                          {imagery[d.scan_id].after_url ? (
+                            <img
+                              src={imagery[d.scan_id].after_url}
+                              alt="After satellite imagery"
+                              onClick={() => setLightbox(imagery[d.scan_id])}
+                              className="w-full rounded border border-slate-200 cursor-zoom-in hover:opacity-90 transition-opacity"
+                            />
+                          ) : (
+                            <p className="text-xs text-slate-400 italic">No clear imagery available</p>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1.5">
+                        Sentinel-2 satellite imagery, ~10m per pixel — enough to sanity-check a
+                        large change, not fine detail like roofline or additions. Click an image
+                        to enlarge.
+                      </p>
+                    </>
                   )}
                 </div>
               </div>
@@ -299,6 +406,50 @@ export default function ParcelDetail() {
       {flags.length === 0 && detections.length === 0 && (
         <div className="text-center text-slate-400 text-sm py-8">
           No detection data yet for this parcel.
+        </div>
+      )}
+
+      {/* Imagery lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center p-6 z-50"
+          onClick={() => setLightbox(null)}
+        >
+          <div className="max-w-5xl w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-white text-sm">
+                Sentinel-2 satellite imagery, ~10m per pixel
+              </p>
+              <button
+                onClick={() => setLightbox(null)}
+                className="text-white/70 hover:text-white text-sm"
+              >
+                Close ✕
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-white/70 text-xs mb-1">
+                  Before ({lightbox.before_range?.join(" – ")})
+                </p>
+                {lightbox.before_url ? (
+                  <img src={lightbox.before_url} alt="Before satellite imagery" className="w-full rounded" />
+                ) : (
+                  <p className="text-white/50 text-xs italic">No clear imagery available</p>
+                )}
+              </div>
+              <div>
+                <p className="text-white/70 text-xs mb-1">
+                  After ({lightbox.after_range?.join(" – ")})
+                </p>
+                {lightbox.after_url ? (
+                  <img src={lightbox.after_url} alt="After satellite imagery" className="w-full rounded" />
+                ) : (
+                  <p className="text-white/50 text-xs italic">No clear imagery available</p>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -3,14 +3,10 @@
  *
  * Table of all flagged parcels, sortable and filterable by status.
  * Staff can bulk-review flags or click through to ParcelDetail.
- *
- * TODO Phase 5:
- *  - Fetch from /api/flags with status filter
- *  - Table: APN, address, owner, NDBI delta, confidence, status, date flagged
- *  - Quick action buttons: Confirm / Dismiss without leaving the list
- *  - Export to CSV
  */
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import api from "../api";
 
 const STATUS_COLORS = {
   pending: "bg-amber-100 text-amber-800",
@@ -19,37 +15,103 @@ const STATUS_COLORS = {
   investigated: "bg-green-100 text-green-800",
 };
 
+function toCsv(flags) {
+  const header = ["APN", "Address", "Owner", "NDBI Delta", "Confidence", "Status", "Flagged"];
+  const rows = flags.map((f) => [
+    f.parcel?.apn ?? "",
+    f.parcel?.situs_address ?? "",
+    f.parcel?.owner_name ?? "",
+    f.detection?.ndbi_delta ?? "",
+    f.detection?.confidence_score != null ? Math.round(f.detection.confidence_score * 100) : "",
+    f.status,
+    new Date(f.created_at).toLocaleDateString(),
+  ]);
+  return [header, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+}
+
 export default function InspectionLog() {
-  // TODO Phase 5: replace with real data from /api/flags
-  const flags = [];
+  const [flags, setFlags] = useState([]);
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [updatingId, setUpdatingId] = useState(null);
+
+  useEffect(() => {
+    loadFlags();
+  }, [status]);
+
+  async function loadFlags() {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api.get("/api/flags/", { params: status ? { status } : {} });
+      setFlags(res.data.flags);
+    } catch (e) {
+      console.error("Failed to load flags", e);
+      setError("Failed to load flagged parcels.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function updateStatus(flagId, newStatus) {
+    setUpdatingId(flagId);
+    try {
+      const res = await api.patch(`/api/flags/${flagId}`, { status: newStatus });
+      setFlags((prev) => prev.map((f) => (f.id === flagId ? { ...f, ...res.data } : f)));
+    } catch (e) {
+      console.error("Failed to update flag", e);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  function exportCsv() {
+    const blob = new Blob([toCsv(flags)], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `flagged-parcels-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold text-slate-800">Flagged Parcels</h1>
         <div className="flex gap-2">
-          <select className="border border-slate-300 rounded px-2 py-1.5 text-sm" disabled>
-            <option>All statuses</option>
-            <option>Pending</option>
-            <option>Confirmed</option>
-            <option>Dismissed</option>
-            <option>Investigated</option>
+          <select
+            className="border border-slate-300 rounded px-2 py-1.5 text-sm"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+          >
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="dismissed">Dismissed</option>
+            <option value="investigated">Investigated</option>
           </select>
           <button
             className="px-3 py-1.5 text-sm border border-slate-300 rounded text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-            disabled
+            onClick={exportCsv}
+            disabled={flags.length === 0}
           >
             Export CSV
           </button>
         </div>
       </div>
 
-      {flags.length === 0 ? (
+      {loading ? (
+        <div className="text-center text-slate-500 py-10">Loading…</div>
+      ) : error ? (
+        <div className="bg-red-50 text-red-700 rounded p-4 text-sm">{error}</div>
+      ) : flags.length === 0 ? (
         <div className="bg-slate-100 rounded p-10 text-center text-slate-500">
-          <p className="font-medium">No flagged parcels yet</p>
-          <p className="text-sm mt-1">
-            Flags are created automatically after a detection scan runs — Phase 3.
-          </p>
+          <p className="font-medium">No flagged parcels{status ? ` with status "${status}"` : ""}</p>
+          <p className="text-sm mt-1">Flags are created automatically after a detection scan runs.</p>
         </div>
       ) : (
         <table className="w-full text-sm border-collapse">
@@ -72,7 +134,11 @@ export default function InspectionLog() {
                 <td className="px-3 py-2">{flag.parcel?.situs_address}</td>
                 <td className="px-3 py-2">{flag.parcel?.owner_name}</td>
                 <td className="px-3 py-2">{flag.detection?.ndbi_delta?.toFixed(3)}</td>
-                <td className="px-3 py-2">{(flag.detection?.confidence_score * 100).toFixed(0)}%</td>
+                <td className="px-3 py-2">
+                  {flag.detection?.confidence_score != null
+                    ? `${(flag.detection.confidence_score * 100).toFixed(0)}%`
+                    : "—"}
+                </td>
                 <td className="px-3 py-2">
                   <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[flag.status]}`}>
                     {flag.status}
@@ -82,12 +148,32 @@ export default function InspectionLog() {
                   {new Date(flag.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-3 py-2">
-                  <Link
-                    to={`/parcels/${flag.parcel_id}`}
-                    className="text-blue-600 hover:underline text-xs"
-                  >
-                    Review
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    {flag.status === "pending" && (
+                      <>
+                        <button
+                          className="text-xs text-green-700 hover:underline disabled:opacity-50"
+                          disabled={updatingId === flag.id}
+                          onClick={() => updateStatus(flag.id, "confirmed")}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          className="text-xs text-slate-500 hover:underline disabled:opacity-50"
+                          disabled={updatingId === flag.id}
+                          onClick={() => updateStatus(flag.id, "dismissed")}
+                        >
+                          Dismiss
+                        </button>
+                      </>
+                    )}
+                    <Link
+                      to={`/parcels/${flag.parcel_id}`}
+                      className="text-blue-600 hover:underline text-xs"
+                    >
+                      Review
+                    </Link>
+                  </div>
                 </td>
               </tr>
             ))}

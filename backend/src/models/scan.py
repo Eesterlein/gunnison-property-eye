@@ -18,6 +18,7 @@ class Scan(Base):
     status = Column(Enum(ScanStatus), default=ScanStatus.pending)
     date_range_start = Column(DateTime, nullable=False)  # "before" period start
     date_range_end = Column(DateTime, nullable=False)    # "after" period end
+    total_parcels = Column(Integer, nullable=True)  # parcels this scan will process, set once at start
     parcels_scanned = Column(Integer, default=0)
     parcels_flagged = Column(Integer, default=0)
     avg_cloud_coverage = Column(Float, nullable=True)

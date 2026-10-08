@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 
 from src.database import get_db
-from src.models import Parcel, Flag, FlagStatus
+from src.models import Parcel, Scan, Flag, FlagStatus
 from src.middleware.auth import get_current_user
+from src.services import gee_service, aerial_service
+from src.services.detection import get_scan_date_ranges
 
 router = APIRouter()
 
@@ -70,9 +72,51 @@ def get_flagged_geojson(
 def get_parcel(parcel_id: int, db: Session = Depends(get_db)):
     parcel = db.query(Parcel).filter(Parcel.id == parcel_id).first()
     if not parcel:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Parcel not found")
     return _parcel_to_dict(parcel)
+
+
+@router.get("/{parcel_id}/imagery")
+def get_parcel_imagery(
+    parcel_id: int,
+    scan_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """
+    True-color Sentinel-2 before/after thumbnails for a parcel + scan, so staff
+    can visually confirm what an NDBI-flagged change actually looks like.
+    """
+    from geoalchemy2.shape import to_shape
+
+    parcel = db.query(Parcel).filter(Parcel.id == parcel_id).first()
+    if not parcel:
+        raise HTTPException(status_code=404, detail="Parcel not found")
+
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    wkt = to_shape(parcel.geometry).wkt
+    before_start, before_end, after_start, after_end = get_scan_date_ranges(scan)
+
+    before_url = gee_service.get_thumbnail_url(wkt, before_start, before_end)
+    after_url = gee_service.get_thumbnail_url(wkt, after_start, after_end)
+
+    # Undated, much higher-resolution reference photo — not part of the
+    # before/after comparison, which stays Sentinel-2 based.
+    try:
+        current_aerial_url = aerial_service.get_current_aerial_image_url(wkt)
+    except Exception:
+        current_aerial_url = None
+
+    return {
+        "before_url": before_url,
+        "after_url": after_url,
+        "before_range": [before_start, before_end],
+        "after_range": [after_start, after_end],
+        "current_aerial_url": current_aerial_url,
+    }
 
 
 def _parcel_to_dict(p: Parcel) -> dict:

@@ -28,18 +28,91 @@ const parcelLineLayer = {
   paint: { "line-color": "#1d4ed8", "line-width": 0.5, "line-opacity": 0.6 },
 };
 
+// Esri World Imagery — free, no API key required, standard satellite basemap
+// for open-source GIS apps.
+const SATELLITE_STYLE = {
+  version: 8,
+  sources: {
+    "esri-satellite": {
+      type: "raster",
+      tiles: [
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      ],
+      tileSize: 256,
+      attribution: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    },
+  },
+  layers: [
+    { id: "esri-satellite-layer", type: "raster", source: "esri-satellite", minzoom: 0, maxzoom: 19 },
+  ],
+};
 
-const DEFAULT_BEFORE = new Date(new Date().getFullYear() - 2, 4, 1)
-  .toISOString()
-  .slice(0, 10);
-const DEFAULT_AFTER = new Date(new Date().getFullYear() - 2, 9, 31)
-  .toISOString()
-  .slice(0, 10);
+const BASEMAP_OPTIONS = {
+  streets: {
+    label: "Streets",
+    // Voyager has more labeling/detail than the previous default (Positron),
+    // which was nearly blank at county zoom levels.
+    style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+  },
+  satellite: {
+    label: "Satellite",
+    style: SATELLITE_STYLE,
+  },
+};
+const DEFAULT_BASEMAP = "streets";
+
+
+// Earliest season with usable Sentinel-2 SR Harmonized coverage.
+const MIN_SEASON_YEAR = 2017;
+
+// A season year Y is only valid once Y+1's Oct 31 has already elapsed —
+// otherwise the "after" comparison window (auto-computed as the same
+// months one year later) would be built from an incomplete/future season.
+function getLatestValidSeasonYear() {
+  const now = new Date();
+  let year = now.getFullYear() - 1;
+  while (new Date(year + 1, 9, 31) > now) {
+    year -= 1;
+  }
+  return year;
+}
+
+const LATEST_VALID_SEASON_YEAR = getLatestValidSeasonYear();
+const SEASON_YEAR_OPTIONS = Array.from(
+  { length: LATEST_VALID_SEASON_YEAR - MIN_SEASON_YEAR + 1 },
+  (_, i) => LATEST_VALID_SEASON_YEAR - i
+);
+
+// Backend timestamps are naive UTC (no "Z" suffix) — parse them as UTC
+// explicitly, otherwise the browser reads them as local time and skews
+// elapsed-time math by the local UTC offset.
+function parseUtc(dateStr) {
+  if (!dateStr) return null;
+  return new Date(dateStr.endsWith("Z") ? dateStr : dateStr + "Z");
+}
+
+function formatDuration(ms) {
+  const totalMinutes = Math.max(1, Math.round(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours === 0 ? `${minutes}m` : `${hours}h ${minutes}m`;
+}
+
+// Extrapolates from progress-so-far — accurate once a few checkpoints have
+// committed, rough right at the start of a scan.
+function estimateTimeRemaining(scan) {
+  if (!scan.started_at || !scan.total_parcels || !scan.parcels_scanned) return null;
+  const elapsedMs = Date.now() - parseUtc(scan.started_at).getTime();
+  const remaining = scan.total_parcels - scan.parcels_scanned;
+  if (elapsedMs <= 0 || scan.parcels_scanned <= 0 || remaining <= 0) return null;
+  return (remaining / scan.parcels_scanned) * elapsedMs;
+}
 
 export default function MapDashboard() {
   const navigate = useNavigate();
   const [viewState, setViewState] = useState(INITIAL_VIEW);
   const [hoveredParcel, setHoveredParcel] = useState(null);
+  const [basemap, setBasemap] = useState(DEFAULT_BASEMAP);
 
   // Flags state
   const [flaggedIds, setFlaggedIds] = useState([]);
@@ -49,8 +122,7 @@ export default function MapDashboard() {
 
   // Scan form
   const [showScanForm, setShowScanForm] = useState(false);
-  const [scanStart, setScanStart] = useState(DEFAULT_BEFORE);
-  const [scanEnd, setScanEnd] = useState(DEFAULT_AFTER);
+  const [scanYear, setScanYear] = useState(LATEST_VALID_SEASON_YEAR);
   const [scanLimit, setScanLimit] = useState("");
   const [scanStatus, setScanStatus] = useState(null); // null | "submitting" | "running" | "error"
   const [lastScan, setLastScan] = useState(null);
@@ -91,8 +163,8 @@ export default function MapDashboard() {
     setScanError("");
     try {
       const body = {
-        date_range_start: scanStart + "T00:00:00",
-        date_range_end: scanEnd + "T00:00:00",
+        date_range_start: `${scanYear}-05-01T00:00:00`,
+        date_range_end: `${scanYear}-10-31T00:00:00`,
         triggered_by: "manual",
       };
       if (scanLimit) body.limit = parseInt(scanLimit, 10);
@@ -162,17 +234,28 @@ export default function MapDashboard() {
       pending: "bg-slate-100 text-slate-600 border-slate-200",
     };
     const cls = colors[lastScan.status] || colors.pending;
+    const etaMs = lastScan.status === "running" ? estimateTimeRemaining(lastScan) : null;
     return (
       <div className={`border rounded p-3 text-xs ${cls}`}>
         <p className="font-medium capitalize">{lastScan.status}</p>
+        {lastScan.started_at && (
+          <p className="opacity-80">Started {parseUtc(lastScan.started_at).toLocaleString()}</p>
+        )}
         {lastScan.parcels_scanned != null && (
           <p>
-            {lastScan.parcels_scanned} scanned · {lastScan.parcels_flagged} flagged
+            {lastScan.parcels_scanned}
+            {lastScan.total_parcels != null ? ` / ${lastScan.total_parcels}` : ""} scanned ·{" "}
+            {lastScan.parcels_flagged} flagged
+          </p>
+        )}
+        {lastScan.status === "running" && (
+          <p className="opacity-80">
+            {etaMs != null ? `~${formatDuration(etaMs)} remaining` : "Estimating time remaining…"}
           </p>
         )}
         {lastScan.completed_at && (
           <p className="text-xs opacity-70">
-            {new Date(lastScan.completed_at).toLocaleDateString()}
+            {parseUtc(lastScan.completed_at).toLocaleDateString()}
           </p>
         )}
         {lastScan.error_message && (
@@ -225,21 +308,22 @@ export default function MapDashboard() {
           </button>
         ) : (
           <form onSubmit={handleRunScan} className="space-y-2 text-sm">
-            <p className="font-medium text-slate-700">Before period</p>
-            <input
-              type="date"
-              value={scanStart}
-              onChange={(e) => setScanStart(e.target.value)}
-              required
+            <p className="font-medium text-slate-700">Season to scan</p>
+            <select
+              value={scanYear}
+              onChange={(e) => setScanYear(parseInt(e.target.value, 10))}
               className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm"
-            />
-            <input
-              type="date"
-              value={scanEnd}
-              onChange={(e) => setScanEnd(e.target.value)}
-              required
-              className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm"
-            />
+            >
+              {SEASON_YEAR_OPTIONS.map((year) => (
+                <option key={year} value={year}>
+                  {year} vs {year + 1} (May–Oct each year)
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-400">
+              Compares the {scanYear} growing season to {scanYear + 1}. Only seasons
+              that have fully finished are selectable.
+            </p>
             <p className="font-medium text-slate-700 pt-1">
               Limit parcels{" "}
               <span className="font-normal text-slate-400">(blank = all)</span>
@@ -272,6 +356,24 @@ export default function MapDashboard() {
             </div>
           </form>
         )}
+
+        {/* Basemap */}
+        <div>
+          <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+            Base map
+          </h3>
+          <select
+            className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm"
+            value={basemap}
+            onChange={(e) => setBasemap(e.target.value)}
+          >
+            {Object.entries(BASEMAP_OPTIONS).map(([key, opt]) => (
+              <option key={key} value={key}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         {/* Filter */}
         <div>
@@ -320,7 +422,7 @@ export default function MapDashboard() {
         <Map
           {...viewState}
           style={{ width: "100%", height: "100%" }}
-          mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+          mapStyle={BASEMAP_OPTIONS[basemap].style}
           onMove={(evt) => setViewState(evt.viewState)}
           onClick={handleClick}
           onMouseMove={handleMouseMove}

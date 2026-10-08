@@ -6,6 +6,7 @@ import os
 from src.database import create_tables
 from src.routes import parcels, scans, detections, flags, auth
 from src.services import gee_service
+from src.scheduler import start_scheduler, stop_scheduler
 
 
 @asynccontextmanager
@@ -16,7 +17,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"WARNING: GEE initialization failed: {e}")
         print("Detection scans will not work until GEE is configured.")
+    start_scheduler()
     yield
+    stop_scheduler()
 
 
 app = FastAPI(

@@ -48,6 +48,18 @@ def compute_delta(
     }
 
 
+def get_scan_date_ranges(scan: Scan) -> tuple[str, str, str, str]:
+    """
+    Derive the "before"/"after" imagery date ranges for a scan.
+    "After" is the same months, one year later than "before".
+    """
+    before_start = scan.date_range_start.strftime("%Y-%m-%d")
+    before_end = scan.date_range_end.strftime("%Y-%m-%d")
+    after_start = scan.date_range_start.replace(year=scan.date_range_start.year + 1).strftime("%Y-%m-%d")
+    after_end = scan.date_range_end.replace(year=scan.date_range_end.year + 1).strftime("%Y-%m-%d")
+    return before_start, before_end, after_start, after_end
+
+
 def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
     """
     Run change detection for a scan across all parcels.
@@ -69,17 +81,15 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
     scan.started_at = datetime.now(timezone.utc)
     db.commit()
 
-    before_start = scan.date_range_start.strftime("%Y-%m-%d")
-    before_end = scan.date_range_end.strftime("%Y-%m-%d")
-
-    # "After" period: same months, one year later
-    after_start = scan.date_range_start.replace(year=scan.date_range_start.year + 1).strftime("%Y-%m-%d")
-    after_end = scan.date_range_end.replace(year=scan.date_range_end.year + 1).strftime("%Y-%m-%d")
+    before_start, before_end, after_start, after_end = get_scan_date_ranges(scan)
 
     parcels_query = db.query(Parcel)
     if limit:
         parcels_query = parcels_query.limit(limit)
     parcels = parcels_query.all()
+
+    scan.total_parcels = len(parcels)
+    db.commit()
 
     scanned = 0
     flagged = 0
@@ -137,8 +147,11 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
 
                 scanned += 1
 
-                # Commit every 50 parcels
+                # Commit every 50 parcels, updating live progress so the UI can
+                # show real numbers instead of 0 until the whole scan finishes
                 if scanned % 50 == 0:
+                    scan.parcels_scanned = scanned
+                    scan.parcels_flagged = flagged
                     db.commit()
                     print(f"  Scanned {scanned}/{len(parcels)} parcels, {flagged} flagged so far...")
 
