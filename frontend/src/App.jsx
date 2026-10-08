@@ -5,6 +5,7 @@ import Login from "./pages/Login";
 import MapDashboard from "./pages/MapDashboard";
 import ParcelDetail from "./pages/ParcelDetail";
 import InspectionLog from "./pages/InspectionLog";
+import { DEMO } from "./demo";
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -16,7 +17,7 @@ export default function App() {
   return (
     <AuthProvider>
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={DEMO ? <Navigate to="/map" replace /> : <Login />} />
         <Route
           element={
             <ProtectedRoute>

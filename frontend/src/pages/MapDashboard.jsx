@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import Map, { Source, Layer, NavigationControl } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import api from "../api";
+import { DEMO } from "../demo";
 
 const INITIAL_VIEW = {
   longitude: -106.925,
@@ -10,7 +11,7 @@ const INITIAL_VIEW = {
   zoom: 10,
 };
 
-const TIPG_BASE = import.meta.env.VITE_TIPG_URL || "http://localhost:8002/api";
+const TIPG_BASE = import.meta.env.VITE_TIPG_URL ?? "http://localhost:8002/api";
 const PARCEL_TILES_URL = `${TIPG_BASE}/collections/public.parcels/tiles/WebMercatorQuad/{z}/{x}/{y}`;
 
 // Default parcel fill
@@ -282,7 +283,7 @@ export default function MapDashboard() {
           {pendingCount > 0 ? (
             <>
               <span className="font-semibold">{pendingCount}</span> parcel
-              {pendingCount !== 1 ? "s" : ""} flagged for review
+              {pendingCount !== 1 ? "s" : ""} {DEMO ? "with detected change" : "flagged for review"}
             </>
           ) : (
             "No pending flags"
@@ -298,7 +299,7 @@ export default function MapDashboard() {
         )}
 
         {/* Run scan */}
-        {!showScanForm ? (
+        {DEMO ? null : !showScanForm ? (
           <button
             onClick={() => setShowScanForm(true)}
             disabled={scanStatus === "running" || scanStatus === "submitting"}
@@ -398,7 +399,7 @@ export default function MapDashboard() {
           </div>
           <div className="flex items-center gap-2">
             <div className="w-4 h-3 rounded bg-orange-500 opacity-70" />
-            <span>Pending review</span>
+            <span>{DEMO ? "Detected change" : "Pending review"}</span>
           </div>
         </div>
 
@@ -408,10 +409,10 @@ export default function MapDashboard() {
             <p className="font-medium text-slate-800 truncate">
               {hoveredParcel.situs_address || "No address"}
             </p>
-            <p>{hoveredParcel.owner_name || "Unknown owner"}</p>
+            {!DEMO && <p>{hoveredParcel.owner_name || "Unknown owner"}</p>}
             <p className="font-mono text-slate-400">{hoveredParcel.apn}</p>
             {flaggedIds.includes(hoveredParcel.id) && (
-              <p className="text-orange-600 font-medium">Flagged for review</p>
+              <p className="text-orange-600 font-medium">{DEMO ? "Change detected" : "Flagged for review"}</p>
             )}
           </div>
         )}

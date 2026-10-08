@@ -1,3 +1,4 @@
+import time
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -9,6 +10,24 @@ from src.services import gee_service, aerial_service
 from src.services.detection import get_scan_date_ranges
 
 router = APIRouter()
+
+# Imagery URL cache: (endpoint, parcel_id, years) -> (expires_at, response).
+# Earth Engine thumbnail URLs stay valid for hours, and each response costs
+# several Earth Engine round trips, so repeat views reuse the last hour's URLs.
+_IMAGERY_TTL_S = 3600
+_imagery_cache: dict[tuple, tuple[float, dict]] = {}
+
+
+def _cached(key: tuple, build):
+    now = time.time()
+    hit = _imagery_cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    value = build()
+    if len(_imagery_cache) > 2000:
+        _imagery_cache.clear()
+    _imagery_cache[key] = (now + _IMAGERY_TTL_S, value)
+    return value
 
 
 @router.get("/")
@@ -137,7 +156,7 @@ def get_parcel_aerial_history(
         raise HTTPException(status_code=404, detail="Parcel not found")
 
     wkt = to_shape(parcel.geometry).wkt
-    return {"years": gee_service.get_aerial_history(wkt)}
+    return _cached(("history", parcel_id), lambda: {"years": gee_service.get_aerial_history(wkt)})
 
 
 @router.get("/{parcel_id}/aerial-closeup")
@@ -165,9 +184,10 @@ def get_parcel_aerial_closeup(
         raise HTTPException(status_code=404, detail="Parcel not found")
 
     wkt = to_shape(parcel.geometry).wkt
-    return {
-        "years": gee_service.get_aerial_history(wkt, buffer_m=10, dimensions=2048, years=year_list)
-    }
+    return _cached(
+        ("closeup", parcel_id, tuple(year_list)),
+        lambda: {"years": gee_service.get_aerial_history(wkt, buffer_m=10, dimensions=2048, years=year_list)},
+    )
 
 
 def _parcel_to_dict(p: Parcel) -> dict:

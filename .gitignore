@@ -32,3 +32,8 @@ data/full/
 
 # macOS
 .DS_Store
+
+# Production secrets
+deploy/.env.production
+deploy/*.dump
+deploy/.env.localtest

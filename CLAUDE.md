@@ -28,7 +28,7 @@ significant change for human review.
 - Vector tiles: **tipg** (OGC Features/tiles served directly from PostGIS) — the
   frontend fetches parcel geometry from tipg, not the FastAPI backend
 - Local Dev: Docker + Docker Compose (PostGIS + backend + tipg)
-- Hosting: TBD (AWS or similar)
+- Hosting: single server via `docker-compose.prod.yml` + Caddy (see Public demo deployment)
 
 ### Local ports (this machine shares ports with other projects)
 - PostGIS: host **5433** → container 5432
@@ -247,6 +247,29 @@ Oct 2022). Labeled "satellite" everywhere; the viewer defaults to the two newest
 NAIP years. On small lots the 10m composite is mostly blur — useful only for large
 parcels. NAIP 2025 for Colorado was not yet delivered as of 2026-10-07; once it is
 in Earth Engine it appears automatically and replaces the 2025 satellite entry.
+
+### Public demo deployment (added 2026-10-07)
+Hosted as a read-only portfolio demo on one small server (DigitalOcean planned).
+- `docker-compose.prod.yml`: db, backend (1 worker — the scheduler is in-process),
+  tipg (restricted to `public.parcels`, no PostGIS functions), web (Caddy + built
+  React app via `deploy/web.Dockerfile`; `deploy/Caddyfile` proxies `/api` →
+  backend and `/tipg/*` → tipg, auto-HTTPS, `index.html` no-cache). Only 80/443 exposed.
+- `DEMO_MODE=true` (backend, `main.py`): get_current_user overridden with a viewer,
+  all non-GET requests → 403, imagery endpoints limited to 20/min per IP.
+  `VITE_DEMO_MODE=true` (frontend, `src/demo.js`): no login, banner, no owner
+  names, no review/scan controls, flags worded "Detected Changes".
+- Imagery URLs cached 1 hour per parcel/years (`routes/parcels.py`), both modes.
+- `deploy/export_demo_db.sh` copies the local DB into a scratch DB, NULLs owner
+  names, empties users, clears reviewer/notes, keeps only v2 detections, verifies,
+  then dumps `deploy/demo.dump`. The real local DB is never modified.
+- `deploy/deploy.sh <ip> [--load-data]` installs Docker if needed, opens 22/80/443,
+  rsyncs code, copies secrets + `deploy/.env.production`, builds, restarts web (so
+  Caddy rereads its bind-mounted config), optionally restores the dump.
+- Emails: `SMTP_FROM` separate from `SMTP_USER` (Brevo logins aren't mailboxes);
+  `APP_URL` is linked in scan summaries; `scripts/send_test_email.py` to test.
+- Dry-run of the full prod stack passed locally (2026-10-07) as compose project
+  `propeye-prodtest` on ports 80/443. Map canvas can't be checked in a hidden
+  automation tab (Chrome pauses rendering); tiles were verified with curl.
 
 ## Important Notes
 - GEE authentication uses a service account JSON key — never commit to git

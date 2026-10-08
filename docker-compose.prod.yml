@@ -1,0 +1,79 @@
+# Production / public demo deployment on a single server.
+#   docker compose -f docker-compose.prod.yml --env-file deploy/.env.production up -d --build
+# Caddy terminates HTTPS (automatic certificates) and is the only service
+# exposed to the internet; the database, API and tile server stay internal.
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-deploy/.env.production}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      GEE_KEY_FILE: /app/secrets/gee-key.json
+    volumes:
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    # One worker: the annual scan scheduler runs in-process, and more workers
+    # would each start their own copy of it.
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
+
+  tipg:
+    image: ghcr.io/developmentseed/tipg:latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASS: ${POSTGRES_PASSWORD}
+      POSTGRES_DBNAME: ${POSTGRES_DB}
+      TIPG_DB_SCHEMAS: '["public"]'
+      # Publish only parcel geometry — not the other tables, and none of
+      # PostGIS's grid-generating functions (an easy way to load the server).
+      TIPG_DB_TABLES: '["public.parcels"]'
+      TIPG_DB_FUNCTIONS: '[]'
+      TIPG_ROOT_PATH: "/api"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: ../deploy/web.Dockerfile
+      args:
+        VITE_DEMO_MODE: ${DEMO_MODE:-false}
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - tipg
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

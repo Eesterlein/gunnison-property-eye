@@ -1,5 +1,6 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { DEMO, FLAGS_LABEL } from "../demo";
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -29,19 +30,29 @@ export default function Layout() {
               isActive ? "text-white underline" : "text-slate-300 hover:text-white"
             }
           >
-            Flagged Parcels
+            {FLAGS_LABEL}
           </NavLink>
         </nav>
-        <div className="ml-auto flex items-center gap-3 text-sm">
-          <span className="text-slate-400">{user?.email}</span>
-          <button
-            onClick={handleLogout}
-            className="text-slate-300 hover:text-white"
-          >
-            Sign out
-          </button>
-        </div>
+        {!DEMO && (
+          <div className="ml-auto flex items-center gap-3 text-sm">
+            <span className="text-slate-400">{user?.email}</span>
+            <button
+              onClick={handleLogout}
+              className="text-slate-300 hover:text-white"
+            >
+              Sign out
+            </button>
+          </div>
+        )}
       </header>
+      {DEMO && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 text-xs px-6 py-1.5 shrink-0">
+          <strong>Read-only demo.</strong> An independent project, not an official product of
+          Gunnison County or its Assessor&apos;s Office. Detected changes are automated
+          satellite measurements, not findings about any property; parcel data comes from
+          public county GIS records.
+        </div>
+      )}
       <main className="flex-1 overflow-hidden">
         <Outlet />
       </main>

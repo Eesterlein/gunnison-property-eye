@@ -1,10 +1,14 @@
 import { createContext, useContext, useState } from "react";
 import api from "../api";
+import { DEMO } from "../demo";
+
+const DEMO_USER = { email: "Public demo", role: "viewer" };
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
+    if (DEMO) return DEMO_USER;
     try {
       const stored = localStorage.getItem("user");
       return stored ? JSON.parse(stored) : null;

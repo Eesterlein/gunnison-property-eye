@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../api";
+import { DEMO, FLAGS_LABEL } from "../demo";
 
 const STATUS_COLORS = {
   pending: "bg-amber-100 text-amber-800",
@@ -16,11 +17,11 @@ const STATUS_COLORS = {
 };
 
 function toCsv(flags) {
-  const header = ["APN", "Address", "Owner", "Vacant on books", "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
+  const header = ["APN", "Address", ...(DEMO ? [] : ["Owner"]), "Vacant on books", "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
   const rows = flags.map((f) => [
     f.parcel?.apn ?? "",
     f.parcel?.situs_address ?? "",
-    f.parcel?.owner_name ?? "",
+    ...(DEMO ? [] : [f.parcel?.owner_name ?? ""]),
     f.parcel?.improvements_value === 0 ? "yes" : "no",
     f.detection?.built_local_delta ?? "",
     f.detection?.ndbi_delta ?? "",
@@ -83,7 +84,7 @@ export default function InspectionLog() {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold text-slate-800">Flagged Parcels</h1>
+        <h1 className="text-xl font-semibold text-slate-800">{FLAGS_LABEL}</h1>
         <div className="flex gap-2">
           <select
             className="border border-slate-300 rounded px-2 py-1.5 text-sm"
@@ -121,7 +122,7 @@ export default function InspectionLog() {
             <tr className="bg-slate-50 border-b border-slate-200">
               <th className="text-left px-3 py-2 font-medium text-slate-600">APN</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Address</th>
-              <th className="text-left px-3 py-2 font-medium text-slate-600">Owner</th>
+              {!DEMO && <th className="text-left px-3 py-2 font-medium text-slate-600">Owner</th>}
               <th className="text-left px-3 py-2 font-medium text-slate-600" title="Parcel-specific change in the probability that the land is built-up, after subtracting change in the surrounding area">Built change</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">NDBI Delta</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Confidence</th>
@@ -145,7 +146,7 @@ export default function InspectionLog() {
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-2">{flag.parcel?.owner_name}</td>
+                {!DEMO && <td className="px-3 py-2">{flag.parcel?.owner_name}</td>}
                 <td className="px-3 py-2">
                   {flag.detection?.built_local_delta != null
                     ? `+${(flag.detection.built_local_delta * 100).toFixed(0)} pts`
@@ -167,7 +168,7 @@ export default function InspectionLog() {
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
-                    {flag.status === "pending" && (
+                    {!DEMO && flag.status === "pending" && (
                       <>
                         <button
                           className="text-xs text-green-700 hover:underline disabled:opacity-50"

@@ -56,9 +56,9 @@ Staff confirm or dismiss each flag, with notes.
 
 ## Status
 
-Working end to end in local development: parcel loading, Earth Engine detection, scheduled
-scans, the map and review workflow, and the aerial photo history. Not yet deployed to a
-hosted environment, and scan-summary emails need SMTP settings (see `.env.example`).
+Working end to end: parcel loading, Earth Engine detection, scheduled scans with email
+summaries, the map and review workflow, and the aerial photo history. Deployable as a
+read-only public demo (see below).
 
 ## Running locally
 
@@ -72,6 +72,22 @@ docker exec -w /app property_eye_backend \
 
 cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
+
+## Deploying (public demo)
+
+A single small Ubuntu server runs everything with Docker Compose; Caddy serves the app and
+gets HTTPS certificates automatically.
+
+```bash
+cp deploy/.env.production.example deploy/.env.production   # fill in address, Earth Engine, email
+deploy/export_demo_db.sh                                     # public-safe copy of the local DB
+deploy/deploy.sh <server-ip> --load-data                     # first deploy (later: omit --load-data)
+```
+
+With `DEMO_MODE=true` the app is read-only and needs no login: every write is refused,
+imagery requests are rate-limited per visitor, and the exported database contains no owner
+names, staff accounts or review notes. Scan summaries are emailed via any SMTP service
+(`SMTP_*` settings); `python scripts/send_test_email.py` in the backend container sends a test.
 
 The Earth Engine service-account key is supplied locally (`secrets/`) and must never be
 committed. Detection thresholds can be tuned with the `BUILT_LOCAL_THRESHOLD` and

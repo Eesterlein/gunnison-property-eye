@@ -1,6 +1,7 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import api from "../api";
+import { DEMO, FLAGS_LABEL } from "../demo";
 
 // Plain-language explanations for the detection jargon, shown on hover.
 const TERM_INFO = {
@@ -386,7 +387,7 @@ export default function ParcelDetail() {
             ← Back to map
           </Link>
           <Link to="/inspections" className="text-sm text-blue-600 hover:underline">
-            ← Back to flagged parcels
+            ← Back to {FLAGS_LABEL.toLowerCase()}
           </Link>
         </div>
         <p className="text-red-600">{error}</p>
@@ -403,7 +404,7 @@ export default function ParcelDetail() {
           ← Back to map
         </Link>
         <Link to="/inspections" className="text-sm text-blue-600 hover:underline">
-          ← Back to flagged parcels
+          ← Back to {FLAGS_LABEL.toLowerCase()}
         </Link>
       </div>
 
@@ -423,7 +424,7 @@ export default function ParcelDetail() {
           )}
         </div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3 text-sm text-slate-600">
-          <p><span className="text-slate-400">Owner:</span> {parcel.owner_name || "—"}</p>
+          {!DEMO && <p><span className="text-slate-400">Owner:</span> {parcel.owner_name || "—"}</p>}
           <p><span className="text-slate-400">Jurisdiction:</span> {parcel.jurisdiction || "—"}</p>
           <p><span className="text-slate-400">Acres:</span> {parcel.acres ?? "—"}</p>
           <p><span className="text-slate-400">Land use:</span> {parcel.land_use_code || "—"}</p>
@@ -454,7 +455,7 @@ export default function ParcelDetail() {
       {/* Flags for review */}
       {flags.length > 0 && (
         <div>
-          <h2 className="font-semibold text-slate-700 mb-3">Flags</h2>
+          <h2 className="font-semibold text-slate-700 mb-3">{DEMO ? "Detected Changes" : "Flags"}</h2>
           <div className="space-y-3">
             {flags.map((flag) => (
               <div
@@ -495,7 +496,7 @@ export default function ParcelDetail() {
                 )}
 
                 {/* Review form */}
-                {flag.status === "pending" && (
+                {!DEMO && flag.status === "pending" && (
                   <>
                     {reviewingFlag === flag.id ? (
                       <div className="pt-2 space-y-2 border-t border-orange-200">

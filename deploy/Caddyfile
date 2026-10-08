@@ -1,0 +1,31 @@
+{$SITE_ADDRESS} {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	# Vector tiles: /tipg/api/collections/... -> tipg's /api/collections/...
+	handle_path /tipg/* {
+		reverse_proxy tipg:80
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		# index.html must always be revalidated so visitors pick up new deploys;
+		# hashed /assets/* files can be cached for good.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@page not path /assets/*
+		header @page Cache-Control "no-cache"
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
