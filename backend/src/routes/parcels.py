@@ -139,6 +139,36 @@ def get_parcel_aerial_history(
     return {"years": gee_service.get_naip_history(wkt)}
 
 
+@router.get("/{parcel_id}/aerial-closeup")
+def get_parcel_aerial_closeup(
+    parcel_id: int,
+    years: str = Query(..., description="Comma-separated flight years, e.g. 2021,2023"),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """
+    Large, tightly framed NAIP renders of the requested years for the
+    full-screen swipe comparison.
+    """
+    from geoalchemy2.shape import to_shape
+
+    try:
+        year_list = sorted({int(y) for y in years.split(",") if y.strip()})
+    except ValueError:
+        raise HTTPException(status_code=422, detail="years must be comma-separated integers")
+    if not 1 <= len(year_list) <= 4:
+        raise HTTPException(status_code=422, detail="Request 1-4 years")
+
+    parcel = db.query(Parcel).filter(Parcel.id == parcel_id).first()
+    if not parcel:
+        raise HTTPException(status_code=404, detail="Parcel not found")
+
+    wkt = to_shape(parcel.geometry).wkt
+    return {
+        "years": gee_service.get_naip_history(wkt, buffer_m=10, dimensions=2048, years=year_list)
+    }
+
+
 def _parcel_to_dict(p: Parcel) -> dict:
     return {
         "id": p.id,

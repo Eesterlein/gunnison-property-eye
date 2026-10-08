@@ -192,6 +192,14 @@ comparison (defaults to the two latest years), and a filmstrip of all years.
   flight tile's footprint and years misalign when a parcel sits near a tile edge.
 - NAIP is review-only, not used for flagging (no SWIR band for NDBI). Its
   2-year cadence means construction from the latest season may not appear yet.
+- **View closer** button opens a full-screen swipe comparison backed by
+  `GET /api/parcels/{id}/aerial-closeup?years=YYYY,YYYY` — same renderer with a
+  10m buffer at 2048px (several MB per image), fetched only on demand. All NAIP
+  renders use bicubic resampling (nearest-neighbor showed hard pixel blocks).
+  The swipe shows a "Loading photos…" cover until both images load, otherwise
+  the bottom year shows through on both sides and reads as "no change".
+- 0.3m (2023) is the sharpest free imagery here — Esri World Imagery over
+  Gunnison is also ~0.31m (WorldView-3, 2022). Zooming past that adds no detail.
 - Possible next step: NAIP-based detection (NDVI loss + brightness gain at
   sub-meter resolution) to catch small additions the 10m NDBI method misses.
 

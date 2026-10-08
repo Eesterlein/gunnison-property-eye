@@ -224,6 +224,7 @@ def get_naip_history(
     geometry_wkt: str,
     buffer_m: int = 40,
     dimensions: int = 768,
+    years: list[int] | None = None,
 ) -> list[dict]:
     """
     Every NAIP flight year covering the parcel, oldest first, each with a
@@ -232,6 +233,9 @@ def get_naip_history(
 
     All years share the same region and dimensions, so the images line up
     pixel-for-pixel and can be overlaid in a swipe comparison.
+
+    years limits rendering to those flight years (e.g. the two being compared
+    in the full-screen close-up, which uses a tighter buffer and larger size).
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -253,12 +257,18 @@ def get_naip_history(
     outline = (
         ee.Image()
         .byte()
-        .paint(ee.FeatureCollection([ee.Feature(geom)]), 1, 2)
+        .paint(ee.FeatureCollection([ee.Feature(geom)]), 1, max(2, dimensions // 512))
         .visualize(palette=["facc15"])
     )
 
     def _year_entry(year: int) -> dict:
-        mosaic = collection.filter(ee.Filter.calendarRange(year, year, "year")).mosaic()
+        # Bicubic resampling — the default nearest-neighbor renders hard-edged
+        # pixel blocks whenever the thumbnail is finer than the source imagery.
+        mosaic = (
+            collection.filter(ee.Filter.calendarRange(year, year, "year"))
+            .map(lambda img: img.resample("bicubic"))
+            .mosaic()
+        )
         vis = mosaic.visualize(bands=["R", "G", "B"], min=0, max=255)
         # Unbounded background so every year renders the full region — a
         # thumbnail is otherwise cropped to the flight's tile footprint and
@@ -276,4 +286,5 @@ def get_naip_history(
 
     # getThumbURL is one round trip per year — run them concurrently.
     with ThreadPoolExecutor(max_workers=6) as pool:
-        return list(pool.map(_year_entry, sorted(dates_by_year)))
+        wanted = [y for y in sorted(dates_by_year) if years is None or y in years]
+        return list(pool.map(_year_entry, wanted))

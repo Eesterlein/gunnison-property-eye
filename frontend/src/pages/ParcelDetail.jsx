@@ -26,6 +26,131 @@ function InfoLabel({ children, term }) {
   );
 }
 
+// Two aligned images with a draggable divider: left year underneath, right
+// year clipped on top. `fit` sizes it to the viewport for the full-screen view.
+function SwipeCompare({ before, after, fit = false }) {
+  const [split, setSplit] = useState(50);
+  // Until both images arrive, the bottom one shows through on both sides —
+  // which would look like "no change". Track loads per URL pair.
+  const [loaded, setLoaded] = useState({});
+  const bothLoaded = loaded[before.url] && loaded[after.url];
+  const markLoaded = (url) => () => setLoaded((prev) => ({ ...prev, [url]: true }));
+  const imgClass = fit ? "block max-w-full max-h-[80vh]" : "w-full block";
+
+  return (
+    <div
+      className={`relative select-none overflow-hidden bg-slate-100 ${
+        fit ? "inline-block rounded" : "rounded border border-slate-200"
+      }`}
+    >
+      <img
+        src={before.url}
+        alt={`Aerial photo ${before.year}`}
+        className={imgClass}
+        onLoad={markLoaded(before.url)}
+        draggable={false}
+      />
+      <img
+        src={after.url}
+        alt={`Aerial photo ${after.year}`}
+        className="absolute inset-0 w-full h-full"
+        style={{ clipPath: `inset(0 0 0 ${split}%)` }}
+        onLoad={markLoaded(after.url)}
+        draggable={false}
+      />
+      {!bothLoaded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white text-sm z-10">
+          Loading photos…
+        </div>
+      )}
+      <div className="absolute top-0 bottom-0 w-0.5 bg-white shadow pointer-events-none" style={{ left: `${split}%` }} />
+      <span className="absolute top-2 left-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5">{before.year}</span>
+      <span className="absolute top-2 right-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5">{after.year}</span>
+      <input
+        type="range"
+        min="0"
+        max="100"
+        value={split}
+        onChange={(e) => setSplit(Number(e.target.value))}
+        aria-label="Swipe between years"
+        className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize"
+      />
+    </div>
+  );
+}
+
+function YearSelect({ label, value, onChange, years, dark = false }) {
+  return (
+    <label className="flex items-center gap-1.5">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className={`border rounded px-1.5 py-1 ${
+          dark ? "bg-slate-800 border-slate-600 text-white" : "border-slate-300"
+        }`}
+      >
+        {years.map((y) => (
+          <option key={y.year} value={y.year}>{y.year}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+// Full-screen swipe comparison using large renders framed tightly on the
+// parcel. Fetched on demand — each close-up image is several MB.
+function AerialCloseup({ parcelId, years, beforeYear, afterYear, setBeforeYear, setAfterYear, onClose }) {
+  const [closeup, setCloseup] = useState(null); // { [year]: entry }
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setCloseup(null);
+    setError("");
+    api
+      .get(`/api/parcels/${parcelId}/aerial-closeup`, { params: { years: `${beforeYear},${afterYear}` } })
+      .then((res) => setCloseup(Object.fromEntries(res.data.years.map((y) => [y.year, y]))))
+      .catch(() => setError("Failed to load close-up photos."));
+  }, [parcelId, beforeYear, afterYear]);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const before = closeup?.[beforeYear];
+  const after = closeup?.[afterYear];
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex flex-col items-center justify-center p-4 z-50" onClick={onClose}>
+      <div className="w-full max-w-7xl flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        <div className="w-full flex flex-wrap items-center justify-between gap-3 text-xs text-white/80">
+          <div className="flex items-center gap-3">
+            <YearSelect label="Left" value={beforeYear} onChange={setBeforeYear} years={years} dark />
+            <YearSelect label="Right" value={afterYear} onChange={setAfterYear} years={years} dark />
+            <span className="text-white/50">Drag across the image to swipe between years.</span>
+          </div>
+          <button onClick={onClose} className="text-white/70 hover:text-white text-sm">
+            Close ✕
+          </button>
+        </div>
+        {error ? (
+          <p className="text-red-400 text-sm py-20">{error}</p>
+        ) : !before || !after ? (
+          <p className="text-white/60 text-sm py-20">Loading close-up photos…</p>
+        ) : (
+          <SwipeCompare before={before} after={after} fit />
+        )}
+        <p className="text-white/50 text-[11px]">
+          USDA NAIP aerial photography; parcel outline in yellow. Newer flights are sharper
+          (2023 ≈ 0.3m per pixel, older years 0.6–1m).
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // Dated high-resolution NAIP aerial photos for every flight year, with a
 // swipe comparison between two chosen years. All years are rendered over the
 // same extent, so the two images line up exactly when overlaid.
@@ -34,7 +159,7 @@ function AerialHistory({ parcelId }) {
   const [error, setError] = useState("");
   const [beforeYear, setBeforeYear] = useState(null);
   const [afterYear, setAfterYear] = useState(null);
-  const [split, setSplit] = useState(50);
+  const [closeupOpen, setCloseupOpen] = useState(false);
 
   useEffect(() => {
     setYears(null);
@@ -66,56 +191,18 @@ function AerialHistory({ parcelId }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-        <label className="flex items-center gap-1.5">
-          Left
-          <select
-            value={beforeYear}
-            onChange={(e) => setBeforeYear(Number(e.target.value))}
-            className="border border-slate-300 rounded px-1.5 py-1"
-          >
-            {years.map((y) => (
-              <option key={y.year} value={y.year}>{y.year}</option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-1.5">
-          Right
-          <select
-            value={afterYear}
-            onChange={(e) => setAfterYear(Number(e.target.value))}
-            className="border border-slate-300 rounded px-1.5 py-1"
-          >
-            {years.map((y) => (
-              <option key={y.year} value={y.year}>{y.year}</option>
-            ))}
-          </select>
-        </label>
+        <YearSelect label="Left" value={beforeYear} onChange={setBeforeYear} years={years} />
+        <YearSelect label="Right" value={afterYear} onChange={setAfterYear} years={years} />
         <span className="text-slate-400">Drag the slider to swipe between years.</span>
+        <button
+          onClick={() => setCloseupOpen(true)}
+          className="ml-auto bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-xs font-medium"
+        >
+          🔍 View closer
+        </button>
       </div>
 
-      {/* Swipe comparison: left year underneath, right year clipped on top */}
-      <div className="relative select-none rounded border border-slate-200 overflow-hidden bg-slate-100">
-        <img src={before.url} alt={`Aerial photo ${before.year}`} className="w-full block" draggable={false} />
-        <img
-          src={after.url}
-          alt={`Aerial photo ${after.year}`}
-          className="absolute inset-0 w-full h-full"
-          style={{ clipPath: `inset(0 0 0 ${split}%)` }}
-          draggable={false}
-        />
-        <div className="absolute top-0 bottom-0 w-0.5 bg-white shadow pointer-events-none" style={{ left: `${split}%` }} />
-        <span className="absolute top-2 left-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5">{before.year}</span>
-        <span className="absolute top-2 right-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5">{after.year}</span>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={split}
-          onChange={(e) => setSplit(Number(e.target.value))}
-          aria-label="Swipe between years"
-          className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize"
-        />
-      </div>
+      <SwipeCompare before={before} after={after} />
       <p className="text-[11px] text-slate-400">
         Left: {before.year} ({flightLabel(before)}). Right: {after.year} ({flightLabel(after)}).
         USDA NAIP aerial photography, roughly 0.3–1m per pixel; parcel outline in yellow.
@@ -140,6 +227,18 @@ function AerialHistory({ parcelId }) {
         ))}
       </div>
       <p className="text-[11px] text-slate-400">Click a year above to compare it on the left.</p>
+
+      {closeupOpen && (
+        <AerialCloseup
+          parcelId={parcelId}
+          years={years}
+          beforeYear={beforeYear}
+          afterYear={afterYear}
+          setBeforeYear={setBeforeYear}
+          setAfterYear={setAfterYear}
+          onClose={() => setCloseupOpen(false)}
+        />
+      )}
     </div>
   );
 }
