@@ -28,8 +28,12 @@ function InfoLabel({ children, term }) {
 
 // Two aligned images with a draggable divider: left year underneath, right
 // year clipped on top. `fit` sizes it to the viewport for the full-screen view.
+// Click or drag anywhere on the image to move the divider (pointer events,
+// not an invisible <input type="range">, which only responds when grabbed at
+// its thumb); arrow keys nudge it when focused.
 function SwipeCompare({ before, after, fit = false }) {
   const [split, setSplit] = useState(50);
+  const [dragging, setDragging] = useState(false);
   // Until both images arrive, the bottom one shows through on both sides —
   // which would look like "no change". Track loads per URL pair.
   const [loaded, setLoaded] = useState({});
@@ -37,9 +41,38 @@ function SwipeCompare({ before, after, fit = false }) {
   const markLoaded = (url) => () => setLoaded((prev) => ({ ...prev, [url]: true }));
   const imgClass = fit ? "block max-w-full max-h-[80vh]" : "w-full block";
 
+  function moveTo(e) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = ((e.clientX - rect.left) / rect.width) * 100;
+    setSplit(Math.min(100, Math.max(0, pct)));
+  }
+
+  function handleKeyDown(e) {
+    const step = e.shiftKey ? 10 : 2;
+    if (e.key === "ArrowLeft") setSplit((s) => Math.max(0, s - step));
+    else if (e.key === "ArrowRight") setSplit((s) => Math.min(100, s + step));
+    else return;
+    e.preventDefault();
+  }
+
   return (
     <div
-      className={`relative select-none overflow-hidden bg-slate-100 ${
+      role="slider"
+      tabIndex={0}
+      aria-label="Swipe between years"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(split)}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDragging(true);
+        moveTo(e);
+      }}
+      onPointerMove={(e) => dragging && moveTo(e)}
+      onPointerUp={() => setDragging(false)}
+      onPointerCancel={() => setDragging(false)}
+      onKeyDown={handleKeyDown}
+      className={`relative select-none overflow-hidden bg-slate-100 cursor-ew-resize touch-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
         fit ? "inline-block rounded" : "rounded border border-slate-200"
       }`}
     >
@@ -63,18 +96,14 @@ function SwipeCompare({ before, after, fit = false }) {
           Loading photos…
         </div>
       )}
-      <div className="absolute top-0 bottom-0 w-0.5 bg-white shadow pointer-events-none" style={{ left: `${split}%` }} />
-      <span className="absolute top-2 left-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5">{before.year}</span>
-      <span className="absolute top-2 right-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5">{after.year}</span>
-      <input
-        type="range"
-        min="0"
-        max="100"
-        value={split}
-        onChange={(e) => setSplit(Number(e.target.value))}
-        aria-label="Swipe between years"
-        className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize"
-      />
+      <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${split}%` }}>
+        <div className="absolute top-0 bottom-0 -translate-x-1/2 w-0.5 bg-white shadow" />
+        <div className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white shadow-md flex items-center justify-center text-slate-600 text-xs">
+          ◀▶
+        </div>
+      </div>
+      <span className="absolute top-2 left-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5 pointer-events-none">{before.year}</span>
+      <span className="absolute top-2 right-2 bg-black/60 text-white text-xs rounded px-1.5 py-0.5 pointer-events-none">{after.year}</span>
     </div>
   );
 }
@@ -193,7 +222,7 @@ function AerialHistory({ parcelId }) {
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
         <YearSelect label="Left" value={beforeYear} onChange={setBeforeYear} years={years} />
         <YearSelect label="Right" value={afterYear} onChange={setAfterYear} years={years} />
-        <span className="text-slate-400">Drag the slider to swipe between years.</span>
+        <span className="text-slate-400">Click or drag across the photo to swipe between years.</span>
         <button
           onClick={() => setCloseupOpen(true)}
           className="ml-auto bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-xs font-medium"

@@ -196,7 +196,10 @@ comparison (defaults to the two latest years), and a filmstrip of all years.
   `GET /api/parcels/{id}/aerial-closeup?years=YYYY,YYYY` — same renderer with a
   10m buffer at 2048px (several MB per image), fetched only on demand. All NAIP
   renders use bicubic resampling (nearest-neighbor showed hard pixel blocks).
-  The swipe shows a "Loading photos…" cover until both images load, otherwise
+  The swipe uses pointer events (click/drag anywhere; arrow keys when focused) —
+  an invisible `<input type="range">` overlay only responded when grabbed at its
+  thumb mid-height, so it seemed broken. It shows a "Loading photos…" cover
+  until both images load, otherwise
   the bottom year shows through on both sides and reads as "no change".
 - 0.3m (2023) is the sharpest free imagery here — Esri World Imagery over
   Gunnison is also ~0.31m (WorldView-3, 2022). Zooming past that adds no detail.
