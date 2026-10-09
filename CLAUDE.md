@@ -279,6 +279,16 @@ Hosted as a read-only portfolio demo on one small server (DigitalOcean planned).
   `propeye-prodtest` on ports 80/443. Map canvas can't be checked in a hidden
   automation tab (Chrome pauses rendering); tiles were verified with curl.
 
+### Data credits (added 2026-10-08)
+Header "Data sources" panel (`components/DataSources.jsx`, both modes) lists every
+outside dataset with its requested credit: county parcel GIS, Copernicus Sentinel-2
+("Contains modified Copernicus Sentinel data"), Cloud Score+, Dynamic World V1
+(© Google LLC and WRI, CC BY 4.0), USDA FSA NAIP, Google Earth Engine, Esri World
+Imagery, CARTO/OpenStreetMap. Short credits also sit under the aerial viewer,
+close-up and Detection History. Earth Engine project is registered for
+non-commercial use; a paid/commercial offering would need a commercial license
+(user chose not to pursue that, 2026-10-08).
+
 ## Important Notes
 - GEE authentication uses a service account JSON key — never commit to git
 - PostGIS is required (not plain Postgres) for geometry column support

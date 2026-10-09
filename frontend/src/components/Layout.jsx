@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { DEMO, FLAGS_LABEL } from "../demo";
+import DataSources from "./DataSources";
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -33,17 +34,20 @@ export default function Layout() {
             {FLAGS_LABEL}
           </NavLink>
         </nav>
-        {!DEMO && (
-          <div className="ml-auto flex items-center gap-3 text-sm">
-            <span className="text-slate-400">{user?.email}</span>
-            <button
-              onClick={handleLogout}
-              className="text-slate-300 hover:text-white"
-            >
-              Sign out
-            </button>
-          </div>
-        )}
+        <div className="ml-auto flex items-center gap-4 text-sm">
+          <DataSources />
+          {!DEMO && (
+            <>
+              <span className="text-slate-400">{user?.email}</span>
+              <button
+                onClick={handleLogout}
+                className="text-slate-300 hover:text-white"
+              >
+                Sign out
+              </button>
+            </>
+          )}
+        </div>
       </header>
       {DEMO && (
         <div className="bg-amber-50 border-b border-amber-200 text-amber-900 text-xs px-6 py-1.5 shrink-0">

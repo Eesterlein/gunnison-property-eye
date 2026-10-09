@@ -190,7 +190,8 @@ function AerialCloseup({ parcelId, years, beforeYear, afterYear, setBeforeYear, 
           <p className="text-white/50 text-[11px]">
             Left: {flightLabel(before)}. Right: {flightLabel(after)}. Parcel outline in yellow.
             Aerial years are USDA NAIP (2023 ≈ 0.3m per pixel, older 0.6–1m); satellite years are
-            Sentinel-2, far blurrier — use them only for large, obvious changes.
+            Sentinel-2, far blurrier — use them only for large, obvious changes. Credits: USDA
+            Farm Service Agency NAIP; contains modified Copernicus Sentinel data.
           </p>
         )}
       </div>
@@ -257,6 +258,8 @@ function AerialHistory({ parcelId }) {
         Parcel outline in yellow. Aerial photos (USDA NAIP, roughly 0.3–1m per pixel) are flown
         about every two years; years after the newest flight are Sentinel-2 satellite composites
         (~10m per pixel, much blurrier) until the next aerial flight is published.
+        Aerial photos: USDA Farm Service Agency NAIP. Satellite: contains modified Copernicus
+        Sentinel data.
       </p>
 
       {/* Every year at a glance — click to put a year on the left */}
@@ -552,7 +555,11 @@ export default function ParcelDetail() {
       {/* Detection history */}
       {detections.length > 0 && (
         <div>
-          <h2 className="font-semibold text-slate-700 mb-3">Detection History</h2>
+          <h2 className="font-semibold text-slate-700 mb-1">Detection History</h2>
+          <p className="text-[11px] text-slate-400 mb-3">
+            Measured with Dynamic World V1 (© Google LLC and World Resources Institute) and
+            Copernicus Sentinel-2 data, processed in Google Earth Engine.
+          </p>
           <div className="space-y-3">
             {detections.map((d) => (
               <div
