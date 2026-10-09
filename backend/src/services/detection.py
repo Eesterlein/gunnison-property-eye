@@ -92,14 +92,44 @@ def _r(value: float | None, digits: int = 4) -> float | None:
     return round(value, digits) if value is not None else None
 
 
-def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
+# Parcel outlines are simplified to ~1m before being sent to Earth Engine:
+# far below the 10m pixel size, and it keeps detailed boundaries from pushing a
+# batch request past Earth Engine's 10 MB payload limit.
+SIMPLIFY_DEGREES = 0.00001
+
+
+def _fetch_batch(items: list[tuple[int, str]], before_year: int, after_year: int) -> tuple[dict, list[int]]:
+    """
+    Earth Engine results for a batch of (parcel_id, wkt). On failure (e.g. the
+    request is still too large, or a transient error) the batch is split in
+    half and each half retried, down to single parcels — so one bad request
+    no longer skips a whole batch. Returns (results, failed parcel ids).
+    """
+    try:
+        return gee_service.get_parcel_change_batch(items, before_year, after_year), []
+    except Exception as e:
+        if len(items) == 1:
+            print(f"  Parcel {items[0][0]} failed: {e}")
+            return {}, [items[0][0]]
+        print(f"  Batch of {len(items)} failed ({str(e)[:80]}); splitting and retrying")
+        mid = len(items) // 2
+        left, left_failed = _fetch_batch(items[:mid], before_year, after_year)
+        right, right_failed = _fetch_batch(items[mid:], before_year, after_year)
+        return {**left, **right}, left_failed + right_failed
+
+
+def run_detection(
+    scan_id: int, db: Session, limit: int | None = None, only_missing: bool = False
+) -> dict:
     """
     Run change detection for a scan across all parcels.
 
     Args:
-        scan_id: ID of the Scan record to run
-        db:      SQLAlchemy session
-        limit:   Optional max parcels to process (useful for testing)
+        scan_id:      ID of the Scan record to run
+        db:           SQLAlchemy session
+        limit:        Optional max parcels to process (useful for testing)
+        only_missing: Re-run only parcels this scan has no result for yet
+                      (e.g. after failures), adding to its existing totals
 
     Returns:
         dict with parcels_scanned, parcels_flagged and errors
@@ -109,13 +139,17 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
         raise ValueError(f"Scan {scan_id} not found")
 
     scan.status = ScanStatus.running
-    scan.started_at = datetime.now(timezone.utc)
+    if not only_missing:
+        scan.started_at = datetime.now(timezone.utc)
     db.commit()
 
     before_year = scan.date_range_start.year
     after_year = before_year + 1
 
     parcels_query = db.query(Parcel.id, Parcel.geometry, Parcel.improvements_value).order_by(Parcel.id)
+    if only_missing:
+        done = db.query(Detection.parcel_id).filter(Detection.scan_id == scan_id)
+        parcels_query = parcels_query.filter(~Parcel.id.in_(done))
     if limit:
         parcels_query = parcels_query.limit(limit)
 
@@ -124,10 +158,12 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
     for pid, geom, imps in parcels_query.all():
         shape = to_shape(geom)
         c = shape.centroid
-        parcels.append((round(c.y, 2), round(c.x, 2), pid, shape.wkt, imps))
+        wkt = shape.simplify(SIMPLIFY_DEGREES, preserve_topology=True).wkt
+        parcels.append((round(c.y, 2), round(c.x, 2), pid, wkt, imps))
     parcels.sort()
 
-    scan.total_parcels = len(parcels)
+    if not only_missing:
+        scan.total_parcels = len(parcels)
     # Commit ends the read transaction — holding it open for the whole
     # (long) Earth Engine run blocks schema changes and other writers.
     db.commit()
@@ -135,19 +171,20 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
     image_date_before = datetime(before_year, 9, 30)
     image_date_after = datetime(after_year, 9, 30)
 
-    scanned = flagged = errors = 0
+    # A fill-in run continues the scan's totals; failures are recounted from scratch
+    if only_missing:
+        scanned = (scan.parcels_scanned or 0) - len(parcels)
+        flagged = scan.parcels_flagged or 0
+    else:
+        scanned = flagged = 0
+    errors = 0
     try:
         for i in range(0, len(parcels), BATCH_SIZE):
             batch = parcels[i:i + BATCH_SIZE]
-            try:
-                results = gee_service.get_parcel_change_batch(
-                    [(pid, wkt) for _, _, pid, wkt, _ in batch], before_year, after_year
-                )
-            except Exception as e:
-                errors += len(batch)
-                scanned += len(batch)
-                print(f"  Batch starting at {i} failed: {e}")
-                continue
+            results, failed = _fetch_batch(
+                [(pid, wkt) for _, _, pid, wkt, _ in batch], before_year, after_year
+            )
+            errors += len(failed)
 
             for _, _, pid, _, imps in batch:
                 scanned += 1
@@ -192,7 +229,7 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
             scan.parcels_scanned = scanned
             scan.parcels_flagged = flagged
             db.commit()
-            print(f"  Scanned {scanned}/{len(parcels)} parcels, {flagged} flagged so far...")
+            print(f"  Scanned {scanned}/{scan.total_parcels} parcels, {flagged} flagged so far...")
 
         now = datetime.now(timezone.utc)
         for _, _, pid, _, _ in parcels:
@@ -201,8 +238,7 @@ def run_detection(scan_id: int, db: Session, limit: int | None = None) -> dict:
         scan.parcels_scanned = scanned
         scan.parcels_flagged = flagged
         scan.completed_at = now
-        if errors:
-            scan.error_message = f"{errors} parcels failed (see logs)"
+        scan.error_message = f"{errors} parcels failed (see logs)" if errors else None
         db.commit()
 
         print(f"Scan {scan_id} complete: {scanned} scanned, {flagged} flagged, {errors} errors")

@@ -233,6 +233,14 @@ Ring subtraction lowers scores for whole new subdivisions (neighbors change too)
 so some townhome projects land in the lower tiers. County-wide 2021→2023:
 31 flags at the default thresholds, 80 at 0.10, 275 at 0.05.
 
+Scan #16 (2024 vs 2025, first full v2 scan, 2026-10-07): 8 flags, 6 on parcels
+vacant on the books. One 1,000-parcel batch failed with Earth Engine's 10 MB
+request-payload limit (detailed parcel boundaries). Fixed: outlines are simplified
+to ~1m before sending, and a failed batch is split in half and retried down to
+single parcels (`_fetch_batch`). `scripts/rescan_missing.py <scan_id>` fills in
+parcels a scan has no result for; it completed #16 with 0 errors (30 parcels have
+no usable pixels, which is expected).
+
 Lesson from this change: add DB columns BEFORE deploying a model that selects
 them (uvicorn --reload picked up the model first → 500s), and never hold a read
 transaction open across a long Earth Engine run (it blocked ALTER TABLE, which
