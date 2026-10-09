@@ -275,6 +275,14 @@ Hosted as a read-only portfolio demo on one small server (DigitalOcean planned).
   Caddy rereads its bind-mounted config), optionally restores the dump.
 - Emails: `SMTP_FROM` separate from `SMTP_USER` (Brevo logins aren't mailboxes);
   `APP_URL` is linked in scan summaries; `scripts/send_test_email.py` to test.
+- **Live 2026-10-08 at https://64.23.133.119.sslip.io** — DigitalOcean droplet
+  `property-eye` (SFO3, Premium AMD 1 vCPU / 2 GB, $14/mo; Regular $12 wasn't
+  offered in SFO). Its own server on purpose: don't co-host other projects that need
+  ports 80/443. Update with `deploy/deploy.sh 64.23.133.119` (add `--load-data` to
+  replace the DB with a fresh `export_demo_db.sh` dump). The DB load runs in
+  `deploy/load_data_remote.sh` on the server; an earlier inline heredoc version
+  broke because `docker compose exec -T` swallowed the rest of the script from stdin.
+  Email is off on the server (SMTP_HOST blank) until Brevo values are filled in.
 - Dry-run of the full prod stack passed locally (2026-10-07) as compose project
   `propeye-prodtest` on ports 80/443. Map canvas can't be checked in a hidden
   automation tab (Chrome pauses rendering); tiles were verified with curl.

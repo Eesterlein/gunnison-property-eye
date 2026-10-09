@@ -60,16 +60,7 @@ if [ "$LOAD_DATA" = "--load-data" ]; then
   [ -f deploy/demo.dump ] || { echo "Run deploy/export_demo_db.sh first"; exit 1; }
   echo "== Loading database"
   scp -q deploy/demo.dump "$REMOTE:$APP_DIR/deploy/demo.dump"
-  ssh "$REMOTE" bash -s <<REMOTE_LOAD
-set -e
-cd $APP_DIR
-set -a; . ./$ENV_FILE; set +a
-$COMPOSE stop backend tipg
-$COMPOSE exec -T db sh -c 'dropdb -U "\$POSTGRES_USER" --if-exists "\$POSTGRES_DB" && createdb -U "\$POSTGRES_USER" "\$POSTGRES_DB"'
-$COMPOSE exec -T db sh -c 'pg_restore -U "\$POSTGRES_USER" -d "\$POSTGRES_DB" --no-owner' < deploy/demo.dump
-rm deploy/demo.dump
-$COMPOSE start backend tipg
-REMOTE_LOAD
+  ssh "$REMOTE" "bash $APP_DIR/deploy/load_data_remote.sh"
 fi
 
 SITE=$(grep -E '^SITE_ADDRESS=' "$ENV_FILE" | cut -d= -f2)
