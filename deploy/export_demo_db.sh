@@ -22,6 +22,10 @@ docker exec "$DB_CONTAINER" sh -c "pg_dump -U $PGUSER -Fc $SRC_DB | pg_restore -
 psql -d "$TMP_DB" <<'SQL'
 -- People: no owner names, no staff accounts or emails
 UPDATE parcels SET owner_name = NULL, notes = NULL;
+-- No "vacant on the books" signal in public: next to a detected change at a real
+-- address it reads like an accusation. Flag priority is derived from it, so reset too.
+UPDATE parcels SET improvements_value = NULL;
+UPDATE flags SET priority = 0;
 TRUNCATE users;
 UPDATE flags SET reviewed_by = NULL, notes = NULL;
 UPDATE scans SET triggered_by = CASE WHEN triggered_by = 'scheduler' THEN 'scheduler' ELSE 'manual' END;
@@ -32,7 +36,7 @@ DELETE FROM scans s WHERE NOT EXISTS (SELECT 1 FROM detections d WHERE d.scan_id
 SQL
 
 # Fail loudly if anything personal survived
-LEFT=$(psql -d "$TMP_DB" -tAc "SELECT (SELECT count(*) FROM parcels WHERE owner_name IS NOT NULL) + (SELECT count(*) FROM users) + (SELECT count(*) FROM flags WHERE reviewed_by IS NOT NULL OR notes IS NOT NULL)")
+LEFT=$(psql -d "$TMP_DB" -tAc "SELECT (SELECT count(*) FROM parcels WHERE owner_name IS NOT NULL OR improvements_value IS NOT NULL) + (SELECT count(*) FROM users) + (SELECT count(*) FROM flags WHERE reviewed_by IS NOT NULL OR notes IS NOT NULL)")
 [ "$LEFT" = "0" ] || { echo "Scrub check failed ($LEFT rows still personal)"; exit 1; }
 
 docker exec "$DB_CONTAINER" pg_dump -U "$PGUSER" -Fc "$TMP_DB" > "$OUT"

@@ -17,12 +17,12 @@ const STATUS_COLORS = {
 };
 
 function toCsv(flags) {
-  const header = ["APN", "Address", ...(DEMO ? [] : ["Owner"]), "Vacant on books", "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
+  const header = ["APN", "Address", ...(DEMO ? [] : ["Owner", "Vacant on books"]), "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
   const rows = flags.map((f) => [
     f.parcel?.apn ?? "",
     f.parcel?.situs_address ?? "",
     ...(DEMO ? [] : [f.parcel?.owner_name ?? ""]),
-    f.parcel?.improvements_value === 0 ? "yes" : "no",
+    ...(DEMO ? [] : [f.parcel?.improvements_value === 0 ? "yes" : "no"]),
     f.detection?.built_local_delta ?? "",
     f.detection?.ndbi_delta ?? "",
     f.detection?.confidence_score != null ? Math.round(f.detection.confidence_score * 100) : "",
@@ -137,7 +137,7 @@ export default function InspectionLog() {
                 <td className="px-3 py-2 font-mono text-xs">{flag.parcel?.apn}</td>
                 <td className="px-3 py-2">
                   {flag.parcel?.situs_address}
-                  {flag.parcel?.improvements_value === 0 && (
+                  {!DEMO && flag.parcel?.improvements_value === 0 && (
                     <span
                       className="ml-2 text-[10px] font-medium bg-red-100 text-red-700 rounded px-1.5 py-0.5 whitespace-nowrap"
                       title="Assessor carries $0 in improvements on this parcel"

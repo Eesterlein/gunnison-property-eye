@@ -431,7 +431,9 @@ export default function ParcelDetail() {
           <p><span className="text-slate-400">Jurisdiction:</span> {parcel.jurisdiction || "—"}</p>
           <p><span className="text-slate-400">Acres:</span> {parcel.acres ?? "—"}</p>
           <p><span className="text-slate-400">Land use:</span> {parcel.land_use_code || "—"}</p>
-          <p>
+          {/* Hidden in the public demo: "vacant on the books" next to a detected
+              change at a real address reads like an accusation */}
+          {!DEMO && <p>
             <span className="text-slate-400">Improvements (assessor):</span>{" "}
             {parcel.improvements_value == null ? (
               "—"
@@ -442,7 +444,7 @@ export default function ParcelDetail() {
             ) : (
               `$${Math.round(parcel.improvements_value).toLocaleString()}`
             )}
-          </p>
+          </p>}
           {parcel.last_scan_date && (
             <p><span className="text-slate-400">Last scan:</span> {new Date(parcel.last_scan_date).toLocaleDateString()}</p>
           )}
