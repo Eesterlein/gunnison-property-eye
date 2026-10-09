@@ -30,6 +30,11 @@ set -e
 if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
   apt-get update -q && apt-get install -y -q docker.io docker-compose-v2
 fi
+# 2 GB swap: headroom for image builds and the annual scan on a 2 GB server
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
 if command -v ufw >/dev/null; then
   ufw allow OpenSSH >/dev/null; ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null
   ufw --force enable >/dev/null
