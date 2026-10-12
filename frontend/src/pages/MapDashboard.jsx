@@ -11,7 +11,12 @@ const INITIAL_VIEW = {
   zoom: 10,
 };
 
-const TIPG_BASE = import.meta.env.VITE_TIPG_URL ?? "http://localhost:8002/api";
+// MapLibre fetches tiles from a web worker, which can't resolve a relative URL
+// like the production "/tipg/api" — make it absolute against this page.
+const TIPG_BASE = new URL(
+  import.meta.env.VITE_TIPG_URL ?? "http://localhost:8002/api",
+  window.location.origin
+).href.replace(/\/$/, "");
 const PARCEL_TILES_URL = `${TIPG_BASE}/collections/public.parcels/tiles/WebMercatorQuad/{z}/{x}/{y}`;
 
 // Default parcel fill
@@ -409,7 +414,7 @@ export default function MapDashboard() {
             <p className="font-medium text-slate-800 truncate">
               {hoveredParcel.situs_address || "No address"}
             </p>
-            {!DEMO && <p>{hoveredParcel.owner_name || "Unknown owner"}</p>}
+            <p>{hoveredParcel.owner_name || "Unknown owner"}</p>
             <p className="font-mono text-slate-400">{hoveredParcel.apn}</p>
             {flaggedIds.includes(hoveredParcel.id) && (
               <p className="text-orange-600 font-medium">{DEMO ? "Change detected" : "Flagged for review"}</p>

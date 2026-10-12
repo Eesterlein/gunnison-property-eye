@@ -264,12 +264,19 @@ Hosted as a read-only portfolio demo on one small server (DigitalOcean planned).
   backend and `/tipg/*` → tipg, auto-HTTPS, `index.html` no-cache). Only 80/443 exposed.
 - `DEMO_MODE=true` (backend, `main.py`): get_current_user overridden with a viewer,
   all non-GET requests → 403, imagery endpoints limited to 20/min per IP.
-  `VITE_DEMO_MODE=true` (frontend, `src/demo.js`): no login, banner, no owner
-  names, no review/scan controls, flags worded "Detected Changes".
+  `VITE_DEMO_MODE=true` (frontend, `src/demo.js`): no login, banner, no
+  review/scan controls, flags worded "Detected Changes", no red "Vacant on books"
+  highlight. Owner names and assessor values ARE shown — user decision 2026-10-11:
+  they're public records from the county's public shapefile.
+- MapLibre needs ABSOLUTE tile URLs (it fetches from a web worker): MapDashboard
+  resolves `VITE_TIPG_URL` ("/tipg/api" in prod) against `window.location.origin`.
+  A relative URL silently drew no parcel lines on the live site (fixed 2026-10-11).
+  Headless checks of the map need Chrome with
+  `--use-angle=swiftshader --enable-unsafe-swiftshader` or WebGL fails to start.
 - Imagery URLs cached 1 hour per parcel/years (`routes/parcels.py`), both modes.
-- `deploy/export_demo_db.sh` copies the local DB into a scratch DB, NULLs owner
-  names, empties users, clears reviewer/notes, keeps only v2 detections, verifies,
-  then dumps `deploy/demo.dump`. The real local DB is never modified.
+- `deploy/export_demo_db.sh` copies the local DB into a scratch DB, empties users,
+  clears reviewer emails/notes, keeps only v2 detections, verifies, then dumps
+  `deploy/demo.dump`. The real local DB is never modified.
 - `deploy/deploy.sh <ip> [--load-data]` installs Docker if needed, opens 22/80/443,
   rsyncs code, copies secrets + `deploy/.env.production`, builds, restarts web (so
   Caddy rereads its bind-mounted config), optionally restores the dump.

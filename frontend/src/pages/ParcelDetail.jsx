@@ -427,24 +427,22 @@ export default function ParcelDetail() {
           )}
         </div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3 text-sm text-slate-600">
-          {!DEMO && <p><span className="text-slate-400">Owner:</span> {parcel.owner_name || "—"}</p>}
+          <p><span className="text-slate-400">Owner:</span> {parcel.owner_name || "—"}</p>
           <p><span className="text-slate-400">Jurisdiction:</span> {parcel.jurisdiction || "—"}</p>
           <p><span className="text-slate-400">Acres:</span> {parcel.acres ?? "—"}</p>
           <p><span className="text-slate-400">Land use:</span> {parcel.land_use_code || "—"}</p>
-          {/* Hidden in the public demo: "vacant on the books" next to a detected
-              change at a real address reads like an accusation */}
-          {!DEMO && <p>
+          <p>
             <span className="text-slate-400">Improvements (assessor):</span>{" "}
             {parcel.improvements_value == null ? (
               "—"
-            ) : parcel.improvements_value === 0 ? (
+            ) : parcel.improvements_value === 0 && !DEMO ? (
               <span className="text-red-700 font-medium">
                 <InfoLabel term="vacant">$0 — vacant on books</InfoLabel>
               </span>
             ) : (
               `$${Math.round(parcel.improvements_value).toLocaleString()}`
             )}
-          </p>}
+          </p>
           {parcel.last_scan_date && (
             <p><span className="text-slate-400">Last scan:</span> {new Date(parcel.last_scan_date).toLocaleDateString()}</p>
           )}

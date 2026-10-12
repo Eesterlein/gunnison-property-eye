@@ -14,8 +14,8 @@ from src.scheduler import start_scheduler, stop_scheduler
 from src.middleware.auth import get_current_user
 
 # Public read-only demo: no login, every write refused, imagery requests
-# rate-limited per visitor. Owner names are stripped from the demo database
-# itself (scripts/export_demo_db.sh), not just hidden here.
+# rate-limited per visitor. Staff accounts, reviewer emails and notes are
+# stripped from the demo database itself (deploy/export_demo_db.sh).
 DEMO_MODE = os.getenv("DEMO_MODE", "").lower() in ("1", "true", "yes")
 
 

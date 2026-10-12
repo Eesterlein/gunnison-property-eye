@@ -17,11 +17,11 @@ const STATUS_COLORS = {
 };
 
 function toCsv(flags) {
-  const header = ["APN", "Address", ...(DEMO ? [] : ["Owner", "Vacant on books"]), "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
+  const header = ["APN", "Address", "Owner", ...(DEMO ? [] : ["Vacant on books"]), "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
   const rows = flags.map((f) => [
     f.parcel?.apn ?? "",
     f.parcel?.situs_address ?? "",
-    ...(DEMO ? [] : [f.parcel?.owner_name ?? ""]),
+    f.parcel?.owner_name ?? "",
     ...(DEMO ? [] : [f.parcel?.improvements_value === 0 ? "yes" : "no"]),
     f.detection?.built_local_delta ?? "",
     f.detection?.ndbi_delta ?? "",
@@ -122,7 +122,7 @@ export default function InspectionLog() {
             <tr className="bg-slate-50 border-b border-slate-200">
               <th className="text-left px-3 py-2 font-medium text-slate-600">APN</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Address</th>
-              {!DEMO && <th className="text-left px-3 py-2 font-medium text-slate-600">Owner</th>}
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Owner</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600" title="Parcel-specific change in the probability that the land is built-up, after subtracting change in the surrounding area">Built change</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">NDBI Delta</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Confidence</th>
@@ -146,7 +146,7 @@ export default function InspectionLog() {
                     </span>
                   )}
                 </td>
-                {!DEMO && <td className="px-3 py-2">{flag.parcel?.owner_name}</td>}
+                <td className="px-3 py-2">{flag.parcel?.owner_name}</td>
                 <td className="px-3 py-2">
                   {flag.detection?.built_local_delta != null
                     ? `+${(flag.detection.built_local_delta * 100).toFixed(0)} pts`
