@@ -6,7 +6,9 @@ from typing import Optional
 from src.database import get_db
 from src.models import Parcel, Scan, Flag, FlagStatus
 from src.middleware.auth import get_current_user
-from src.services import gee_service, aerial_service
+from fastapi.responses import FileResponse
+
+from src.services import gee_service, aerial_service, aerial_cache
 from src.services.detection import get_scan_date_ranges
 
 router = APIRouter()
@@ -138,6 +140,32 @@ def get_parcel_imagery(
     }
 
 
+# Image framing per view: the page's swipe/filmstrip, and the full-screen close-up
+_IMAGE_KINDS = {
+    "normal": {"buffer_m": 40, "dimensions": 768},
+    "closeup": {"buffer_m": 10, "dimensions": 2048},
+}
+
+
+def _with_image_urls(parcel_id: int, entries: list[dict], kind: str) -> list[dict]:
+    return [
+        {
+            **e,
+            "url": f"/api/parcels/{parcel_id}/aerial-image?year={e['year']}&source={e['source']}&kind={kind}",
+        }
+        for e in entries
+    ]
+
+
+def _parcel_wkt(db: Session, parcel_id: int) -> str:
+    from geoalchemy2.shape import to_shape
+
+    parcel = db.query(Parcel).filter(Parcel.id == parcel_id).first()
+    if not parcel:
+        raise HTTPException(status_code=404, detail="Parcel not found")
+    return to_shape(parcel.geometry).wkt
+
+
 @router.get("/{parcel_id}/aerial-history")
 def get_parcel_aerial_history(
     parcel_id: int,
@@ -148,15 +176,11 @@ def get_parcel_aerial_history(
     Dated high-resolution NAIP aerial photos of the parcel for every flight
     year available (~every 2 years since 2005), plus ~10m satellite composites
     for newer seasons not yet covered by NAIP, for visual change review.
+    Image URLs point at /aerial-image, which renders and caches each one.
     """
-    from geoalchemy2.shape import to_shape
-
-    parcel = db.query(Parcel).filter(Parcel.id == parcel_id).first()
-    if not parcel:
-        raise HTTPException(status_code=404, detail="Parcel not found")
-
-    wkt = to_shape(parcel.geometry).wkt
-    return _cached(("history", parcel_id), lambda: {"years": gee_service.get_aerial_history(wkt)})
+    wkt = _parcel_wkt(db, parcel_id)
+    entries = _cached(("years", parcel_id), lambda: gee_service.get_aerial_years(wkt))
+    return {"years": _with_image_urls(parcel_id, entries, "normal")}
 
 
 @router.get("/{parcel_id}/aerial-closeup")
@@ -170,8 +194,6 @@ def get_parcel_aerial_closeup(
     Large, tightly framed renders of the requested years for the
     full-screen swipe comparison.
     """
-    from geoalchemy2.shape import to_shape
-
     try:
         year_list = sorted({int(y) for y in years.split(",") if y.strip()})
     except ValueError:
@@ -179,15 +201,35 @@ def get_parcel_aerial_closeup(
     if not 1 <= len(year_list) <= 4:
         raise HTTPException(status_code=422, detail="Request 1-4 years")
 
-    parcel = db.query(Parcel).filter(Parcel.id == parcel_id).first()
-    if not parcel:
-        raise HTTPException(status_code=404, detail="Parcel not found")
+    wkt = _parcel_wkt(db, parcel_id)
+    entries = _cached(("years", parcel_id), lambda: gee_service.get_aerial_years(wkt))
+    wanted = [e for e in entries if e["year"] in year_list]
+    return {"years": _with_image_urls(parcel_id, wanted, "closeup")}
 
-    wkt = to_shape(parcel.geometry).wkt
-    return _cached(
-        ("closeup", parcel_id, tuple(year_list)),
-        lambda: {"years": gee_service.get_aerial_history(wkt, buffer_m=10, dimensions=2048, years=year_list)},
-    )
+
+@router.get("/{parcel_id}/aerial-image")
+def get_parcel_aerial_image(
+    parcel_id: int,
+    year: int,
+    source: str = Query(..., pattern="^(naip|sentinel2)$"),
+    kind: str = Query("normal", pattern="^(normal|closeup)$"),
+    db: Session = Depends(get_db),
+):
+    """
+    One rendered year of imagery as a PNG, cached on disk after the first
+    request (see services/aerial_cache.py). No login required: it's requested
+    by <img> tags, which can't send a token, and only shows public imagery.
+    """
+    wkt = _parcel_wkt(db, parcel_id)
+    key = f"{parcel_id}_{year}_{source}_{kind}"
+    try:
+        path = aerial_cache.get_image_path(
+            key, lambda: gee_service.get_aerial_thumb_url(wkt, year, source, **_IMAGE_KINDS[kind])
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Imagery temporarily unavailable: {str(e)[:120]}")
+    # Flight photos and completed seasons never change, so browsers can keep them
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
 
 
 def _parcel_to_dict(p: Parcel) -> dict:

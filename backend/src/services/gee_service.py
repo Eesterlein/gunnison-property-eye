@@ -226,33 +226,21 @@ def _latest_complete_season() -> int:
     return today.year if today.month >= 10 else today.year - 1
 
 
-def get_aerial_history(
-    geometry_wkt: str,
-    buffer_m: int = 40,
-    dimensions: int = 768,
-    years: list[int] | None = None,
-) -> list[dict]:
+def get_aerial_years(geometry_wkt: str, buffer_m: int = 40) -> list[dict]:
     """
-    Every year of imagery covering the parcel, oldest first, each with a
-    true-color thumbnail URL (parcel outline drawn in yellow) and its date range:
-      - source "naip": every NAIP aerial flight year (sharp, ~every 2 years)
+    Every year of imagery covering the parcel, oldest first (metadata only —
+    one Earth Engine request; images are rendered per year by
+    get_aerial_thumb_url):
+      - source "naip": every NAIP aerial flight year (sharp, ~every 2 years),
+        with the flight dates
       - source "sentinel2": each completed season AFTER the newest NAIP flight,
         as a ~10m satellite composite — blurry, but the only free imagery for
         those years until the next NAIP flight is published. Superseded
         automatically once NAIP for that year appears in Earth Engine.
-
-    All years share the same region and dimensions, so the images line up
-    pixel-for-pixel and can be overlaid in a swipe comparison.
-
-    years limits rendering to those years (e.g. the two being compared in the
-    full-screen close-up, which uses a tighter buffer and larger size).
     """
-    from concurrent.futures import ThreadPoolExecutor
-
     initialize()
 
-    geom = _wkt_to_ee_geometry(geometry_wkt)
-    region = geom.buffer(buffer_m).bounds()
+    region = _wkt_to_ee_geometry(geometry_wkt).buffer(buffer_m).bounds()
     naip = ee.ImageCollection(NAIP_COLLECTION).filterBounds(region)
 
     naip_dates: dict[int, list[str]] = {}
@@ -260,8 +248,53 @@ def get_aerial_history(
         d = datetime.utcfromtimestamp(ts / 1000).date()
         naip_dates.setdefault(d.year, []).append(d.isoformat())
 
+    entries = []
+    for year in sorted(naip_dates):
+        dates = sorted(naip_dates[year])
+        entries.append({"year": year, "source": "naip", "date_start": dates[0], "date_end": dates[-1]})
+
     first_satellite_year = max(naip_dates, default=2018) + 1
-    satellite_years = list(range(first_satellite_year, _latest_complete_season() + 1))
+    for year in range(first_satellite_year, _latest_complete_season() + 1):
+        start, end = _core_season(year)
+        entries.append({"year": year, "source": "sentinel2", "date_start": start, "date_end": end})
+    return entries
+
+
+def get_aerial_thumb_url(
+    geometry_wkt: str, year: int, source: str, buffer_m: int = 40, dimensions: int = 768
+) -> str:
+    """
+    True-color PNG thumbnail URL for one year of imagery (see get_aerial_years),
+    parcel outline in yellow. Every year uses the same region and dimensions,
+    so images line up pixel-for-pixel in a swipe comparison.
+    """
+    initialize()
+
+    geom = _wkt_to_ee_geometry(geometry_wkt)
+    region = geom.buffer(buffer_m).bounds()
+
+    if source == "naip":
+        # Bicubic resampling — the default nearest-neighbor renders hard-edged
+        # pixel blocks whenever the thumbnail is finer than the source imagery.
+        vis = (
+            ee.ImageCollection(NAIP_COLLECTION)
+            .filterBounds(region)
+            .filter(ee.Filter.calendarRange(year, year, "year"))
+            .map(lambda img: img.resample("bicubic"))
+            .mosaic()
+            .visualize(bands=["R", "G", "B"], min=0, max=255)
+        )
+    elif source == "sentinel2":
+        start, end = _core_season(year)
+        # Same display stretch as get_thumbnail_url
+        vis = (
+            _masked_collection(region, start, end)
+            .map(lambda img: img.resample("bicubic"))
+            .median()
+            .visualize(bands=["B4", "B3", "B2"], min=0, max=3000, gamma=1.4)
+        )
+    else:
+        raise ValueError(f"Unknown imagery source: {source}")
 
     outline = (
         ee.Image()
@@ -277,45 +310,9 @@ def get_aerial_history(
         .rename(["vis-red", "vis-green", "vis-blue"])
         .uint8()
     )
-
-    def _thumb(vis: ee.Image) -> str:
-        return ee.ImageCollection([background, vis, outline]).mosaic().getThumbURL(
-            {"region": region, "dimensions": dimensions, "format": "png"}
-        )
-
-    def _naip_entry(year: int) -> dict:
-        # Bicubic resampling — the default nearest-neighbor renders hard-edged
-        # pixel blocks whenever the thumbnail is finer than the source imagery.
-        mosaic = (
-            naip.filter(ee.Filter.calendarRange(year, year, "year"))
-            .map(lambda img: img.resample("bicubic"))
-            .mosaic()
-        )
-        dates = sorted(naip_dates[year])
-        return {
-            "year": year,
-            "source": "naip",
-            "date_start": dates[0],
-            "date_end": dates[-1],
-            "url": _thumb(mosaic.visualize(bands=["R", "G", "B"], min=0, max=255)),
-        }
-
-    def _satellite_entry(year: int) -> dict | None:
-        start, end = _core_season(year)
-        collection = _masked_collection(region, start, end).map(lambda img: img.resample("bicubic"))
-        if collection.size().getInfo() == 0:
-            return None
-        # Same display stretch as get_thumbnail_url
-        vis = collection.median().visualize(bands=["B4", "B3", "B2"], min=0, max=3000, gamma=1.4)
-        return {"year": year, "source": "sentinel2", "date_start": start, "date_end": end, "url": _thumb(vis)}
-
-    jobs = [(_naip_entry, y) for y in sorted(naip_dates)] + [(_satellite_entry, y) for y in satellite_years]
-    jobs = [(fn, y) for fn, y in jobs if years is None or y in years]
-
-    # getThumbURL is one round trip per year — run them concurrently.
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        entries = list(pool.map(lambda job: job[0](job[1]), jobs))
-    return [e for e in entries if e is not None]
+    return ee.ImageCollection([background, vis, outline]).mosaic().getThumbURL(
+        {"region": region, "dimensions": dimensions, "format": "png"}
+    )
 
 
 # ── Parcel-specific change (detection v2) ────────────────────────────────────

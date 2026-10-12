@@ -304,6 +304,23 @@ close-up and Detection History. Earth Engine project is registered for
 non-commercial use; a paid/commercial offering would need a commercial license
 (user chose not to pursue that, 2026-10-08).
 
+### Aerial image cache (added 2026-10-11)
+Browsers used to load every year's thumbnail straight from Earth Engine — ~13
+requests at once per parcel page — and Earth Engine answered most with 429 Too
+Many Requests while a scan was running (photos "never fully loaded"). Now:
+- `GET /api/parcels/{id}/aerial-history` returns year metadata only
+  (`gee_service.get_aerial_years`, one EE request), with image URLs pointing at
+  `GET /api/parcels/{id}/aerial-image?year=&source=naip|sentinel2&kind=normal|closeup`.
+- That endpoint renders one image (`get_aerial_thumb_url`), downloads it with at
+  most 3 concurrent EE fetches per process and retries on 429/5xx
+  (`services/aerial_cache.py`), stores it on disk (prod volume `aerial_cache`,
+  LRU-pruned at 3 GB) and serves it with a 7-day browser cache. No auth on this
+  endpoint: `<img>` tags can't send a token, and the imagery is public.
+- Frontend `RetryImg` retries a failed image up to 3 times.
+- `scripts/warm_aerial_cache.py` pre-renders every pending-flag parcel's years +
+  newest-pair close-up; run it on the server after new scans so demos are instant.
+  (Running it over HTTP hits the demo's 20/min imagery limit — run it in-container.)
+
 ## Important Notes
 - GEE authentication uses a service account JSON key — never commit to git
 - PostGIS is required (not plain Postgres) for geometry column support

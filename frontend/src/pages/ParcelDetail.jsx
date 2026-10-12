@@ -31,6 +31,23 @@ function InfoLabel({ children, term }) {
   );
 }
 
+// An <img> that retries a few times if the server couldn't render it yet
+// (e.g. Earth Engine was busy), instead of leaving a broken image.
+function RetryImg({ src, ...props }) {
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => setAttempt(0), [src]);
+  const retrySrc = attempt ? `${src}${src.includes("?") ? "&" : "?"}retry=${attempt}` : src;
+  return (
+    <img
+      {...props}
+      src={retrySrc}
+      onError={() => {
+        if (attempt < 3) setTimeout(() => setAttempt((a) => a + 1), 2000 * (attempt + 1));
+      }}
+    />
+  );
+}
+
 // Satellite years (after the newest aerial flight) are ~10m and blurry —
 // always say so wherever a year is shown, so blur isn't mistaken for change.
 const isSatellite = (y) => y.source === "sentinel2";
@@ -92,14 +109,14 @@ function SwipeCompare({ before, after, fit = false }) {
         fit ? "inline-block rounded" : "rounded border border-slate-200"
       }`}
     >
-      <img
+      <RetryImg
         src={before.url}
         alt={`Aerial photo ${before.year}`}
         className={imgClass}
         onLoad={markLoaded(before.url)}
         draggable={false}
       />
-      <img
+      <RetryImg
         src={after.url}
         alt={`Aerial photo ${after.year}`}
         className="absolute inset-0 w-full h-full"
@@ -275,7 +292,7 @@ function AerialHistory({ parcelId }) {
                 : "border-slate-200 hover:border-slate-400"
             }`}
           >
-            <img src={y.url} alt={`Aerial photo ${y.year}`} loading="lazy" className="w-full rounded-sm" />
+            <RetryImg src={y.url} alt={`Aerial photo ${y.year}`} loading="lazy" className="w-full rounded-sm" />
             <span className="block text-[11px] text-slate-600 px-0.5">
               {y.year}
               {isSatellite(y) && <span className="text-amber-700"> · satellite</span>}

@@ -27,6 +27,8 @@ services:
       GEE_KEY_FILE: /app/secrets/gee-key.json
     volumes:
       - ./secrets:/app/secrets:ro
+      # Rendered aerial/satellite images, kept across restarts and redeploys
+      - aerial_cache:/app/cache
     depends_on:
       db:
         condition: service_healthy
@@ -75,5 +77,6 @@ services:
 
 volumes:
   pgdata:
+  aerial_cache:
   caddy_data:
   caddy_config:
