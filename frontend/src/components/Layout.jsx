@@ -37,7 +37,10 @@ export default function Layout() {
         <div className="ml-auto flex items-center gap-4 text-sm">
           <DataSources />
           {readOnly ? (
-            <Link to="/login" className="text-slate-400 hover:text-white">
+            <Link
+              to="/login"
+              className="text-white border border-slate-500 hover:border-white rounded px-2.5 py-1"
+            >
               Admin sign in
             </Link>
           ) : (
