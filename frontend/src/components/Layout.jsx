@@ -1,15 +1,15 @@
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { DEMO, FLAGS_LABEL } from "../demo";
 import DataSources from "./DataSources";
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, readOnly } = useAuth();
   const navigate = useNavigate();
 
   function handleLogout() {
     logout();
-    navigate("/login", { replace: true });
+    navigate(DEMO ? "/map" : "/login", { replace: true });
   }
 
   return (
@@ -36,7 +36,11 @@ export default function Layout() {
         </nav>
         <div className="ml-auto flex items-center gap-4 text-sm">
           <DataSources />
-          {!DEMO && (
+          {readOnly ? (
+            <Link to="/login" className="text-slate-400 hover:text-white">
+              Admin sign in
+            </Link>
+          ) : (
             <>
               <span className="text-slate-400">{user?.email}</span>
               <button
@@ -51,7 +55,12 @@ export default function Layout() {
       </header>
       {DEMO && (
         <div className="bg-amber-50 border-b border-amber-200 text-amber-900 text-xs px-6 py-1.5 shrink-0">
-          <strong>Read-only demo.</strong> An independent project, not an official product of
+          {readOnly ? (
+            <strong>Read-only demo.</strong>
+          ) : (
+            <strong>Signed in as admin — reviews and scans you start here are live.</strong>
+          )}{" "}
+          An independent project, not an official product of
           Gunnison County or its Assessor&apos;s Office. Detected changes are automated
           satellite measurements, not findings about any property; parcel data comes from
           public county GIS records.

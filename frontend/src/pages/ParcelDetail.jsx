@@ -2,6 +2,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import api from "../api";
 import { DEMO, FLAGS_LABEL } from "../demo";
+import { useAuth } from "../context/AuthContext";
 
 // Plain-language explanations for the detection jargon, shown on hover.
 const TERM_INFO = {
@@ -300,6 +301,7 @@ function AerialHistory({ parcelId }) {
 }
 
 export default function ParcelDetail() {
+  const { readOnly } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
 
@@ -435,7 +437,7 @@ export default function ParcelDetail() {
             <span className="text-slate-400">Improvements (assessor):</span>{" "}
             {parcel.improvements_value == null ? (
               "—"
-            ) : parcel.improvements_value === 0 && !DEMO ? (
+            ) : parcel.improvements_value === 0 && !readOnly ? (
               <span className="text-red-700 font-medium">
                 <InfoLabel term="vacant">$0 — vacant on books</InfoLabel>
               </span>
@@ -499,7 +501,7 @@ export default function ParcelDetail() {
                 )}
 
                 {/* Review form */}
-                {!DEMO && flag.status === "pending" && (
+                {!readOnly && flag.status === "pending" && (
                   <>
                     {reviewingFlag === flag.id ? (
                       <div className="pt-2 space-y-2 border-t border-orange-200">

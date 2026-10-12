@@ -4,18 +4,20 @@ import { DEMO } from "../demo";
 
 const DEMO_USER = { email: "Public demo", role: "viewer" };
 
+function storedUser() {
+  try {
+    const stored = localStorage.getItem("user");
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    if (DEMO) return DEMO_USER;
-    try {
-      const stored = localStorage.getItem("user");
-      return stored ? JSON.parse(stored) : null;
-    } catch {
-      return null;
-    }
-  });
+  // In the public demo, visitors browse as a read-only viewer until an admin signs in
+  const [user, setUser] = useState(() => storedUser() ?? (DEMO ? DEMO_USER : null));
 
   async function login(email, password) {
     const params = new URLSearchParams();
@@ -36,11 +38,15 @@ export function AuthProvider({ children }) {
   function logout() {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    setUser(null);
+    setUser(DEMO ? DEMO_USER : null);
   }
 
+  // Public demo visitors can look but not change anything; staff builds and a
+  // signed-in admin on the demo get the full review and scan controls.
+  const readOnly = DEMO && user?.role !== "super_admin";
+
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, login, logout, readOnly }}>
       {children}
     </AuthContext.Provider>
   );

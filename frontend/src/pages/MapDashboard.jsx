@@ -4,6 +4,7 @@ import Map, { Source, Layer, NavigationControl } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import api from "../api";
 import { DEMO } from "../demo";
+import { useAuth } from "../context/AuthContext";
 
 const INITIAL_VIEW = {
   longitude: -106.925,
@@ -115,6 +116,7 @@ function estimateTimeRemaining(scan) {
 }
 
 export default function MapDashboard() {
+  const { readOnly } = useAuth();
   const navigate = useNavigate();
   const [viewState, setViewState] = useState(INITIAL_VIEW);
   const [hoveredParcel, setHoveredParcel] = useState(null);
@@ -243,8 +245,12 @@ export default function MapDashboard() {
     const etaMs = lastScan.status === "running" ? estimateTimeRemaining(lastScan) : null;
     return (
       <div className={`border rounded p-3 text-xs ${cls}`}>
-        <p className="font-medium capitalize">{lastScan.status}</p>
-        {lastScan.started_at && (
+        <p className="font-medium">
+          Latest scan: summer {new Date(lastScan.date_range_start).getFullYear()} vs.{" "}
+          {new Date(lastScan.date_range_start).getFullYear() + 1}
+        </p>
+        <p className="capitalize opacity-80">{lastScan.status}</p>
+        {lastScan.status === "running" && lastScan.started_at && (
           <p className="opacity-80">Started {parseUtc(lastScan.started_at).toLocaleString()}</p>
         )}
         {lastScan.parcels_scanned != null && (
@@ -261,7 +267,7 @@ export default function MapDashboard() {
         )}
         {lastScan.completed_at && (
           <p className="text-xs opacity-70">
-            {parseUtc(lastScan.completed_at).toLocaleDateString()}
+            Ran {parseUtc(lastScan.completed_at).toLocaleDateString()}
           </p>
         )}
         {lastScan.error_message && (
@@ -304,7 +310,7 @@ export default function MapDashboard() {
         )}
 
         {/* Run scan */}
-        {DEMO ? null : !showScanForm ? (
+        {readOnly ? null : !showScanForm ? (
           <button
             onClick={() => setShowScanForm(true)}
             disabled={scanStatus === "running" || scanStatus === "submitting"}

@@ -7,7 +7,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../api";
-import { DEMO, FLAGS_LABEL } from "../demo";
+import { FLAGS_LABEL } from "../demo";
+import { useAuth } from "../context/AuthContext";
 
 const STATUS_COLORS = {
   pending: "bg-amber-100 text-amber-800",
@@ -16,13 +17,14 @@ const STATUS_COLORS = {
   investigated: "bg-green-100 text-green-800",
 };
 
-function toCsv(flags) {
-  const header = ["APN", "Address", "Owner", ...(DEMO ? [] : ["Vacant on books"]), "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
+function toCsv(flags, readOnly) {
+  const header = ["Seasons", "APN", "Address", "Owner", ...(readOnly ? [] : ["Vacant on books"]), "Built change", "NDBI Delta", "Confidence", "Status", "Flagged"];
   const rows = flags.map((f) => [
+    f.seasons ? `${f.seasons[0]}-${f.seasons[1]}` : "",
     f.parcel?.apn ?? "",
     f.parcel?.situs_address ?? "",
     f.parcel?.owner_name ?? "",
-    ...(DEMO ? [] : [f.parcel?.improvements_value === 0 ? "yes" : "no"]),
+    ...(readOnly ? [] : [f.parcel?.improvements_value === 0 ? "yes" : "no"]),
     f.detection?.built_local_delta ?? "",
     f.detection?.ndbi_delta ?? "",
     f.detection?.confidence_score != null ? Math.round(f.detection.confidence_score * 100) : "",
@@ -35,6 +37,7 @@ function toCsv(flags) {
 }
 
 export default function InspectionLog() {
+  const { readOnly } = useAuth();
   const [flags, setFlags] = useState([]);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
@@ -49,7 +52,7 @@ export default function InspectionLog() {
     setLoading(true);
     setError("");
     try {
-      const res = await api.get("/api/flags/", { params: status ? { status } : {} });
+      const res = await api.get("/api/flags/", { params: { limit: 2000, ...(status ? { status } : {}) } });
       setFlags(res.data.flags);
     } catch (e) {
       console.error("Failed to load flags", e);
@@ -72,7 +75,7 @@ export default function InspectionLog() {
   }
 
   function exportCsv() {
-    const blob = new Blob([toCsv(flags)], { type: "text/csv" });
+    const blob = new Blob([toCsv(flags, readOnly)], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -120,6 +123,7 @@ export default function InspectionLog() {
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="text-left px-3 py-2 font-medium text-slate-600" title="The two summers compared">Seasons</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">APN</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Address</th>
               <th className="text-left px-3 py-2 font-medium text-slate-600">Owner</th>
@@ -134,10 +138,13 @@ export default function InspectionLog() {
           <tbody>
             {flags.map((flag) => (
               <tr key={flag.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                  {flag.seasons ? `${flag.seasons[0]} → ${flag.seasons[1]}` : "—"}
+                </td>
                 <td className="px-3 py-2 font-mono text-xs">{flag.parcel?.apn}</td>
                 <td className="px-3 py-2">
                   {flag.parcel?.situs_address}
-                  {!DEMO && flag.parcel?.improvements_value === 0 && (
+                  {!readOnly && flag.parcel?.improvements_value === 0 && (
                     <span
                       className="ml-2 text-[10px] font-medium bg-red-100 text-red-700 rounded px-1.5 py-0.5 whitespace-nowrap"
                       title="Assessor carries $0 in improvements on this parcel"
@@ -168,7 +175,7 @@ export default function InspectionLog() {
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
-                    {!DEMO && flag.status === "pending" && (
+                    {!readOnly && flag.status === "pending" && (
                       <>
                         <button
                           className="text-xs text-green-700 hover:underline disabled:opacity-50"
