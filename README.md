@@ -5,6 +5,9 @@ Gunnison County, Colorado parcels with satellite imagery from Google Earth Engin
 parcels that show signs of new construction, so assessor staff can review them alongside
 dated aerial photography. Every flag is a suggestion for human review, not a determination.
 
+**Live demo:** [64.23.133.119.sslip.io](https://64.23.133.119.sslip.io) (read-only; owner names
+and assessor values are removed from the public copy).
+
 > **Independent project.** This is an independent project and is not an official product of the Gunnison County Assessor's Office or Gunnison County. Any county data it works with comes from publicly available assessor and GIS data, and results may contain errors or out-of-date information. Always verify against official county records.
 
 ## How it works
