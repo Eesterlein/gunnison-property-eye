@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 # GDAL and geospatial dependencies (Bookworm ships GDAL 3.6, required by rasterio 1.4+)
 RUN apt-get update && apt-get install -y --no-install-recommends \
