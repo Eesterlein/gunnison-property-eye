@@ -1,7 +1,7 @@
 # Web framework
-fastapi==0.111.0
+fastapi==0.115.14
 uvicorn[standard]==0.29.0
-python-multipart==0.0.9
+python-multipart==0.0.30
 
 # Database
 sqlalchemy==2.0.30
@@ -10,11 +10,11 @@ psycopg2-binary==2.9.9
 alembic==1.13.1
 
 # Geospatial
-geopandas==1.0.1
+geopandas==1.1.2
 shapely==2.0.4
 rasterio==1.4.3
 pyproj==3.6.1
-fiona==1.9.6
+fiona==1.10.1
 
 # Google Earth Engine
 earthengine-api==0.1.401
@@ -23,7 +23,7 @@ earthengine-api==0.1.401
 apscheduler==3.10.4
 
 # Auth
-python-jose[cryptography]==3.3.0
+PyJWT==2.15.1
 passlib[bcrypt]==1.7.4
 
 # Utilities

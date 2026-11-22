@@ -50,11 +50,13 @@ rsync -az --delete \
   ./ "$REMOTE:$APP_DIR/"
 scp -q secrets/gee-key.json "$REMOTE:$APP_DIR/secrets/gee-key.json"
 scp -q "$ENV_FILE" "$REMOTE:$APP_DIR/$ENV_FILE"
-ssh "$REMOTE" "chmod 600 $APP_DIR/secrets/gee-key.json $APP_DIR/$ENV_FILE"
+# The backend runs as UID 10001 (see backend/Dockerfile), so it must own its key file
+ssh "$REMOTE" "chown 10001:10001 $APP_DIR/secrets/gee-key.json && chmod 600 $APP_DIR/secrets/gee-key.json $APP_DIR/$ENV_FILE"
 
 echo "== Building and starting"
 # restart web so Caddy rereads deploy/Caddyfile (a bind mount; `up` alone keeps the old config)
-ssh "$REMOTE" "cd $APP_DIR && $COMPOSE up -d --build && $COMPOSE restart web"
+# Build first, then give the photo-cache volume to the backend's non-root user
+ssh "$REMOTE" "cd $APP_DIR && $COMPOSE build && $COMPOSE run --rm --no-deps --user root --entrypoint chown backend -R 10001:10001 /app/cache && $COMPOSE up -d && $COMPOSE restart web"
 
 if [ "$LOAD_DATA" = "--load-data" ]; then
   [ -f deploy/demo.dump ] || { echo "Run deploy/export_demo_db.sh first"; exit 1; }

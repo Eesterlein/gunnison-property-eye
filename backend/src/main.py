@@ -57,7 +57,7 @@ app.add_middleware(
 )
 
 if DEMO_MODE:
-    from jose import JWTError
+    from jwt import PyJWTError as JWTError
     from src.database import SessionLocal
     from src.models import User, UserRole
     from src.services.auth_service import decode_token

@@ -1,0 +1,11 @@
+# Findings accepted on purpose. Each entry needs a reason and an expiry date,
+# after which the scanner reports it again so the decision gets re-reviewed.
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - deploy/web.Dockerfile
+    statement: >-
+      Caddy (the web server) runs as root because it binds ports 80/443 and owns
+      the TLS certificate volume. It serves static files and proxies to the
+      backend, which runs as a non-root user.
+    expired_at: 2027-06-01

@@ -1,0 +1,23 @@
+# Weekly update PRs. The cooldown skips brand-new releases for a week, so a
+# poisoned release is usually caught and pulled before we would adopt it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups: { actions: { patterns: ["*"] } }
+  - package-ecosystem: pip
+    directory: /backend
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 5
+  - package-ecosystem: docker
+    directories: [/backend, /deploy]
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }

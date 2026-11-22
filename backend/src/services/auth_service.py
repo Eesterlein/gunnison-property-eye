@@ -1,7 +1,7 @@
 import os
 import bcrypt
 from datetime import datetime, timedelta
-from jose import jwt
+import jwt  # PyJWT
 
 SECRET_KEY = os.getenv("JWT_SECRET", "changeme")
 ALGORITHM = "HS256"
