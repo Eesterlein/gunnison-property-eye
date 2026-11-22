@@ -1,5 +1,5 @@
 # Builds the React app, then serves it (and proxies the API/tiles) with Caddy.
-FROM node:20-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
