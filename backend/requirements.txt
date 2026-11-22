@@ -20,7 +20,7 @@ fiona==1.10.1
 earthengine-api==0.1.401
 
 # Scheduler
-apscheduler==3.10.4
+apscheduler==3.11.3
 
 # Auth
 PyJWT==2.15.1
