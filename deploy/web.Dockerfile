@@ -10,5 +10,5 @@ ENV VITE_API_URL="" VITE_TIPG_URL="/tipg/api" VITE_DEMO_MODE=${VITE_DEMO_MODE}
 RUN npm run build
 
 # Caddy stays root: it binds ports 80/443 and owns the TLS certificate volume.
-FROM caddy:2.8
+FROM caddy:2.10
 COPY --from=build /app/dist /srv
